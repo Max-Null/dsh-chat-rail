@@ -1,0 +1,24 @@
+node_modules/
+*.tgz
+*.log
+.DS_Store
+
+# 会话日志备份与导出（敏感数据，仅本地排查用）
+tests/exports/
+tests/ref-dsh-chat-timeline/
+tests/*.graphql
+tests/*.json
+
+# 本地排查调试脚本（硬编码本机路径，非插件功能）
+tests/e2e-*.mjs
+tests/inspect-*.ts
+tests/issue-body.md
+tests/fix-seq.ts
+tests/seq-gap*.ts
+tests/seq-gap.mjs
+tests/simulate-projection.ts
+tests/to-zstd.ts
+tests/verify-*.ts
+
+# 原始截图（docs/shots/ 有规范副本）
+ScreenShot/
