@@ -1,0 +1,6 @@
+# @max-null/dsh-chat-rail bundle patch: one insert over the profile root.
+# Host half registers the user-message projection; client half renders the
+# right-edge navigation rail in the conversation view.
+- insert:
+    - id: chat-rail
+      name: '@max-null/dsh-chat-rail'
