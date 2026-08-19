@@ -232,6 +232,12 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * loadOlder pages 50 messages at a time (DSH PAGE_MESSAGES), so a jump far back
  * in a long session needs many pages. Report page count through onProgress so
  * the UI can show a loading state instead of appearing frozen.
+ *
+ * The paged-in data lands in the session snapshot synchronously with
+ * loadOlder's resolution, but the chat rows render through React — the DOM row
+ * for the target key appears a beat later. We therefore poll for the row (with
+ * a timeout) instead of querying once and giving up; otherwise a multi-page
+ * jump would "finish loading" without scrolling and need a second click.
  */
 async function jumpToMessage(
   sessionsService: { binding: (id: string) => { session?: { getSnapshot(): unknown; loadOlder(): Promise<unknown>; hasMore?: boolean; loadingOlder?: boolean } } | undefined },
@@ -258,7 +264,17 @@ async function jumpToMessage(
     onProgress?.(pages)
   }
   const scrollport = typeof document !== 'undefined' ? document.querySelector('[data-conversation-scroll]') : null
-  const row = scrollport === null ? null : scrollport.querySelector(`[data-chat-anchor-key="${CSS.escape(key)}"]`)
+  if (scrollport === null) return false
+  // The snapshot is authoritative for "loaded", but the row's DOM node only
+  // appears once React renders the prepended page. Poll for it (up to ~5s) so a
+  // freshly paged-in jump scrolls on the same click.
+  let row: Element | null = null
+  let waited = 0
+  while (waited++ < 100) {
+    row = scrollport.querySelector(`[data-chat-anchor-key="${CSS.escape(key)}"]`)
+    if (row !== null) break
+    await delay(50)
+  }
   if (row === null) return false
   const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
   row.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' })
