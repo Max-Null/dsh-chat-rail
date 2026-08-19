@@ -244,15 +244,21 @@ async function jumpToMessage(
   sessionId: string,
   key: string,
   onProgress?: (pages: number) => void,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const session = sessionsService.binding(sessionId)?.session
   if (session === undefined) return false
   let pages = 0
   let guard = 0
+  let loaded = false
   while (guard++ < 120) {
+    if (signal?.aborted) return false
     const snapshot = session.getSnapshot() as { chat?: { nodes?: Map<string, unknown> }; hasMore?: boolean; loadingOlder?: boolean } | undefined
-    if (snapshot?.chat?.nodes?.get(key) !== undefined) break
-    if (snapshot?.hasMore !== true) return false
+    if (snapshot?.chat?.nodes?.get(key) !== undefined) {
+      loaded = true
+      break
+    }
+    if (snapshot?.hasMore !== true) break
     if (snapshot.loadingOlder === true) {
       // Another loader owns the current page; wait for it without busy-spinning.
       await delay(50)
@@ -263,6 +269,12 @@ async function jumpToMessage(
     // Report progress only on page boundaries, not every loop iteration.
     onProgress?.(pages)
   }
+  // Page guard exhausted (or hasMore ran out) without the node materializing:
+  // fail fast with context instead of burning the DOM poll below.
+  if (!loaded) {
+    console.warn(`[chat-rail] jumpToMessage: node "${key}" not loaded after ${pages} page(s)`)
+    return false
+  }
   const scrollport = typeof document !== 'undefined' ? document.querySelector('[data-conversation-scroll]') : null
   if (scrollport === null) return false
   // The snapshot is authoritative for "loaded", but the row's DOM node only
@@ -271,6 +283,7 @@ async function jumpToMessage(
   let row: Element | null = null
   let waited = 0
   while (waited++ < 100) {
+    if (signal?.aborted) return false
     row = scrollport.querySelector(`[data-chat-anchor-key="${CSS.escape(key)}"]`)
     if (row !== null) break
     await delay(50)
@@ -325,6 +338,10 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
   // transition takes ~250ms after `show` flips, and item rects are only
   // stable once it finishes. Tip positioning must wait for this.
   const expandedRef = useRef(false)
+  // Aborts an in-flight jump (component unmount or a newer click superseding
+  // an older one), so the loadOlder/DOM-poll loops stop promptly.
+  const jumpAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => jumpAbortRef.current?.abort(), [])
 
   /** Position the tip against the item's CURRENT (post-expand) rect. */
   const positionTip = (index: number) => {
@@ -483,8 +500,12 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
       disabled: jumping,
       onClick: () => {
         if (key === undefined || jumping) return
+        jumpAbortRef.current?.abort()
+        const controller = new AbortController()
+        jumpAbortRef.current = controller
         setJumping(true)
-        void jumpToMessage(sessionsService as never, sessionId as string, key).finally(() => setJumping(false))
+        void jumpToMessage(sessionsService as never, sessionId as string, key, undefined, controller.signal)
+          .finally(() => setJumping(false))
       },
       onMouseEnter: () => handleItemEnter(i),
       onMouseLeave: () => handleItemLeave(i),
