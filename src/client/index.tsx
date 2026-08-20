@@ -40,6 +40,7 @@ const STRINGS: Record<LocaleId, Record<string, string>> = {
     roleUser: '用户',
     noText: '（无文本内容）',
     ariaJump: '跳转到消息',
+    hasImage: '含图片',
     loading: '加载中…',
     timeJustNow: '刚刚',
     timeMinutes: '{n}分钟前',
@@ -51,6 +52,7 @@ const STRINGS: Record<LocaleId, Record<string, string>> = {
     roleUser: 'User',
     noText: '(no text)',
     ariaJump: 'Jump to message',
+    hasImage: 'Has image',
     loading: 'Loading…',
     timeJustNow: 'just now',
     timeMinutes: '{n}m ago',
@@ -120,6 +122,8 @@ const css = [
   // Indicator line: 10×3px, clearly visible in both themes.
   '.crl_ind{flex-shrink:0;display:flex;justify-content:center;align-items:center;width:18px;height:20px}',
   '.crl_show .crl_ind{margin-left:8px}',
+  '.crl_img{flex-shrink:0;display:flex;align-items:center;justify-content:center;width:12px;height:12px;margin-left:6px;border:1px solid currentColor;border-radius:2px;opacity:.65}',
+  '.crl_img::before{content:"";width:6px;height:6px;border:1px solid currentColor;border-radius:1px;background:radial-gradient(circle at 30% 30%,currentColor 0 1px,transparent 1.5px)}',
   '.crl_line{background-color:rgba(0,0,0,.45);border-radius:4px;flex-shrink:0;width:10px;height:3px;transition:background-color .2s ease,transform .2s ease}',
   '.crl_item:hover .crl_line{background-color:rgba(0,0,0,.9)}',
   '.crl_item.crl_active .crl_line{background-color:var(--dsw-alias-state-business-primary,#4d6bfe);transform-origin:50%;transform:scale(1.4);box-shadow:0 0 6px var(--dsw-alias-state-business-primary,#4d6bfe)}',
@@ -151,6 +155,7 @@ const S = {
   time: 'crl_time',
   ind: 'crl_ind',
   line: 'crl_line',
+  img: 'crl_img',
   loading: 'crl_loading',
   loadingLabel: 'crl_loadingLabel',
   tip: 'crl_tip',
@@ -163,6 +168,7 @@ interface RailMessage {
   seq: number
   time: number
   text: string
+  hasImage: boolean
   key?: string
   id?: string
 }
@@ -180,6 +186,13 @@ function userTextOf(content: unknown): string {
   return out.trim().slice(0, 80)
 }
 
+/** Whether a ContentBlock list carries an image block (rc.8 attachments). */
+function userHasImage(content: unknown): boolean {
+  if (!Array.isArray(content)) return false
+  return content.some(block => block !== null && typeof block === 'object'
+    && (block as { type?: unknown }).type === 'image')
+}
+
 /** Normalize one projection entry to a rail message. */
 function normalize(m: unknown): RailMessage | null {
   if (m === null || typeof m !== 'object') return null
@@ -192,6 +205,8 @@ function normalize(m: unknown): RailMessage | null {
     seq: o.seq,
     time: typeof o.time === 'number' ? o.time : 0,
     text,
+    // Older projections lack hasImage; defensive default false.
+    hasImage: o.hasImage === true,
     ...(typeof o.key === 'string' ? { key: o.key } : {}),
     ...(typeof o.id === 'string' ? { id: o.id } : {}),
   }
@@ -212,7 +227,7 @@ function collectFromNodes(snapshot: unknown): RailMessage[] {
     if (typeof data.time !== 'number' || !Array.isArray(data.content)) continue
     const key = typeof n.key === 'string' ? n.key : undefined
     if (key === undefined) continue
-    out.push({ seq: typeof n.anchorSeq === 'number' ? n.anchorSeq : 0, time: data.time, text: userTextOf(data.content), key })
+    out.push({ seq: typeof n.anchorSeq === 'number' ? n.anchorSeq : 0, time: data.time, text: userTextOf(data.content), hasImage: userHasImage(data.content), key })
   }
   out.sort((a, b) => a.seq - b.seq)
   return out
@@ -512,6 +527,7 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
       children: [
         createElement('span', { className: S.num }, `#${i + 1}`),
         createElement('span', { className: S.title }, m.text === '' ? t.noText : m.text),
+        m.hasImage ? createElement('span', { className: S.img, title: t.hasImage, 'aria-label': t.hasImage }) : null,
         createElement('span', { className: S.time }, relativeTime(m.time, t)),
         createElement('span', { className: S.ind, 'aria-hidden': true },
           createElement('span', { className: S.line })),

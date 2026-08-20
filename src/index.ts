@@ -32,6 +32,13 @@ function textOf(content: unknown): string {
   return out.trim().slice(0, MAX_TEXT_CHARS)
 }
 
+/** Whether a ContentBlock list carries an image block (rc.8 多模态附件）。 */
+function hasImageBlock(content: unknown): boolean {
+  if (!Array.isArray(content)) return false
+  return content.some(block => block !== null && typeof block === 'object'
+    && (block as { type?: unknown }).type === 'image')
+}
+
 export interface ChatRailAnchor {
   /** Event seq (ordering). */
   seq: number
@@ -39,6 +46,8 @@ export interface ChatRailAnchor {
   time: number
   /** Preview text (capped). */
   text: string
+  /** Whether the user message carries an image block (rc.8 attachments). */
+  hasImage: boolean
   /** Durable message id used to reconstruct the chat node anchor for jumping. */
   id: string
 }
@@ -61,14 +70,15 @@ const messageIndexProjectionDefinition = {
         return state
       }
       const text = textOf(data.content)
+      const hasImage = hasImageBlock(data.content)
       const id = typeof data.id === 'string' ? data.id : ''
       if (!id) return state
-      return { messages: [...state.messages, { seq: event.seq, time: event.time, text, id }] }
+      return { messages: [...state.messages, { seq: event.seq, time: event.time, text, hasImage, id }] }
     }
     return state
   },
   view: (state: { messages: ChatRailAnchor[] }) => state,
-  stateVersion: 4,
+  stateVersion: 5,
 }
 
 const Config = {
