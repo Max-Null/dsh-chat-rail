@@ -1,3 +1,8 @@
+# 插件跟随官方 @deepseek-ai/dsh-* rc 版本线开发（rc 发布 <24h 常态），
+# 关闭 pnpm 11 默认发布年龄保护（minimumReleaseAge=1440 分钟）；否则
+# pnpm run 前的 supply-chain lockfile 验证会以 MINIMUM_RELEASE_AGE_VIOLATION
+# 拦截（2026-08-22 实测 0.1.1-rc.1 全家 66 条目）。
+minimumReleaseAge: 0
 allowBuilds:
   esbuild: true
   node-pty: false

@@ -54,7 +54,10 @@ export interface ChatRailAnchor {
 
 const messageIndexProjectionDefinition = {
   key: PROJECTION_KEY,
-  schema: { parse: (val: unknown) => val },
+  // rc.2 起投影 API 分 host-only 与 client-visible 两类：无 wire 的单元
+  // 不进 client 快照（历史事件重放后 client 读不到值）。chatRail 是
+  // 导航数据，必须带 wire 才能经 history 基线/推帧到达 useProjection。
+  stateSchema: { parse: (val: unknown) => val },
   init: () => ({ messages: [] as ChatRailAnchor[] }),
   apply: (state: { messages: ChatRailAnchor[] }, event: { type: string; seq: number; time: number; data: unknown }): { messages: ChatRailAnchor[] } => {
     // Only DIRECT user-sent messages shape the rail. Plugin- and tool-injected
@@ -77,7 +80,10 @@ const messageIndexProjectionDefinition = {
     }
     return state
   },
-  view: (state: { messages: ChatRailAnchor[] }) => state,
+  wire: {
+    viewSchema: { parse: (val: unknown) => val },
+    view: (state: { messages: ChatRailAnchor[] }) => state,
+  },
   stateVersion: 5,
 }
 

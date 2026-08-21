@@ -16,10 +16,9 @@ interface ProjectionDef {
   schema: { parse: (v: unknown) => unknown }
   init: () => unknown
   apply: (state: unknown, event: unknown) => unknown
-  view: (state: unknown) => unknown
+  wire: { view: (state: unknown) => unknown }
   stateVersion: number
 }
-
 function loadProjection(): ProjectionDef {
   let def: ProjectionDef | undefined
   apply({
@@ -100,7 +99,7 @@ test('ignores non-user/message events', () => {
 test('view returns the accumulated state', () => {
   const def = loadProjection()
   const state = def.apply(def.init(), userMessageEvent())
-  assert.equal(def.view(state), state)
+  assert.equal(def.wire.view(state), state)
 })
 
 test('config schema accepts an empty value', () => {
