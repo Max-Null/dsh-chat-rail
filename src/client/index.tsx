@@ -23,7 +23,7 @@
  * Mounted in conversation.input.dock, portal-rendered to body.
  */
 
-import { createElement, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createElement, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'
@@ -122,8 +122,13 @@ const css = [
   // Indicator line: 10×3px, clearly visible in both themes.
   '.crl_ind{flex-shrink:0;display:flex;justify-content:center;align-items:center;width:18px;height:20px}',
   '.crl_show .crl_ind{margin-left:8px}',
-  '.crl_img{flex-shrink:0;display:flex;align-items:center;justify-content:center;width:12px;height:12px;margin-left:6px;border:1px solid currentColor;border-radius:2px;opacity:.65}',
-  '.crl_img::before{content:"";width:6px;height:6px;border:1px solid currentColor;border-radius:1px;background:radial-gradient(circle at 30% 30%,currentColor 0 1px,transparent 1.5px)}',
+  // Image badge: hidden in the collapsed state (the rail is a clean 36px
+  // capsule of indicator lines; an icon there would crowd and distract) and
+  // revealed with the other labels on expand. A quiet stroke glyph in a muted
+  // tone that ignores the active-blue text color.
+  '.crl_img{display:none;flex-shrink:0;align-items:center;justify-content:center;width:14px;height:14px;margin-left:6px;color:rgba(0,0,0,.38)}',
+  '.crl_show .crl_img{display:inline-flex;animation:crl-fade .18s ease}',
+  'body[data-ds-dark-theme] .crl_img,[data-theme=\'dark\'] .crl_img,.dark .crl_img{color:rgba(255,255,255,.38)}',
   '.crl_line{background-color:rgba(0,0,0,.45);border-radius:4px;flex-shrink:0;width:10px;height:3px;transition:background-color .2s ease,transform .2s ease}',
   '.crl_item:hover .crl_line{background-color:rgba(0,0,0,.9)}',
   '.crl_item.crl_active .crl_line{background-color:var(--dsw-alias-state-business-primary,#4d6bfe);transform-origin:50%;transform:scale(1.4);box-shadow:0 0 6px var(--dsw-alias-state-business-primary,#4d6bfe)}',
@@ -133,7 +138,19 @@ const css = [
   // Full-content hover panel: floats to the LEFT of the expanded rail list.
   '.crl_tip{position:fixed;z-index:200;max-width:360px;max-height:70vh;overflow-y:auto;padding:10px 12px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary,var(--text-primary,rgba(0,0,0,.85)));background:var(--dsw-alias-surface-raised,var(--bg-elevated,rgba(255,255,255,.97)));border:1px solid var(--dsw-alias-border-l2,var(--border-default,rgba(0,0,0,.12)));border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.16);white-space:pre-wrap;word-break:break-word;pointer-events:none}',
   'body[data-ds-dark-theme] .crl_tip,[data-theme=\'dark\'] .crl_tip,.dark .crl_tip{background:var(--dsw-alias-surface-raised,var(--bg-elevated,rgba(28,28,32,.97)));border-color:var(--dsw-alias-border-l2,var(--border-default,rgba(255,255,255,.14)))}',
-  '@media (prefers-reduced-motion:reduce){.crl_nav,.crl_title,.crl_num,.crl_time,.crl_line{transition:none}}',
+  // Tip thumbnail gallery: stacked above the text, one row per image, capped
+  // height so a tall screenshot cannot swallow the preview panel. The
+  // placeholder pulses while session.readAttachment resolves the bytes; a
+  // failed load removes the row entirely rather than showing a broken image.
+  '.crl_tipImgs{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}',
+  '.crl_tipImgWrap{position:relative;width:fit-content;max-width:100%;max-height:150px}',
+  '.crl_tipImg{display:block;max-width:100%;max-height:150px;width:auto;height:auto;object-fit:contain;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,var(--border-default,rgba(0,0,0,.12)))}',
+  '.crl_tipImgCount{position:absolute;right:6px;bottom:6px;padding:0 6px;font-size:10px;line-height:16px;border-radius:9px;background:rgba(0,0,0,.55);color:rgba(255,255,255,.95);pointer-events:none}',
+  '.crl_tipImgPh{flex-shrink:0;height:56px;border-radius:8px;background:var(--dsw-alias-surface-sunken,var(--bg-muted,rgba(0,0,0,.05)));animation:crl-pulse 1.2s ease-in-out infinite}',
+  'body[data-ds-dark-theme] .crl_tipImg,[data-theme=\'dark\'] .crl_tipImg,.dark .crl_tipImg{border-color:var(--dsw-alias-border-l2,var(--border-default,rgba(255,255,255,.14)))}',
+  '.crl_tipBadge{display:inline-block;margin-bottom:8px;padding:0 7px;font-size:10px;line-height:16px;border-radius:9px;background:var(--dsw-alias-surface-sunken,var(--bg-muted,rgba(0,0,0,.06)));color:var(--dsw-alias-label-secondary,var(--text-muted,rgba(0,0,0,.45)))}',
+  '@keyframes crl-pulse{0%,100%{opacity:.45}50%{opacity:.85}}',
+  '@media (prefers-reduced-motion:reduce){.crl_nav,.crl_title,.crl_num,.crl_time,.crl_line{transition:none}.crl_tipImgPh{animation:none}}',
 ].join('')
 
 const STYLE_ID = '@max-null/dsh-chat-rail/styles.module.css'
@@ -159,18 +176,121 @@ const S = {
   loading: 'crl_loading',
   loadingLabel: 'crl_loadingLabel',
   tip: 'crl_tip',
+  tipImgs: 'crl_tipImgs',
+  tipImgWrap: 'crl_tipImgWrap',
+  tipImg: 'crl_tipImg',
+  tipImgCount: 'crl_tipImgCount',
+  tipImgPh: 'crl_tipImgPh',
+  tipBadge: 'crl_tipBadge',
 }
 
 // ---- data helpers ----
 const NOOP_STORE = { getSnapshot: () => undefined, subscribe: () => () => {} }
+
+interface RailImage {
+  attachmentId: string
+  mediaType: string
+  width: number
+  height: number
+}
 
 interface RailMessage {
   seq: number
   time: number
   text: string
   hasImage: boolean
+  /** Stored-image references from the host projection (empty when inline-only). */
+  images?: RailImage[]
   key?: string
   id?: string
+}
+
+/** One displayable tip image: either a durable reference (resolved lazily) or
+ *  an inline base64 payload already usable as an <img> src. */
+type ImageSpec =
+  | { kind: 'ref'; attachmentId: string; mediaType: string }
+  | { kind: 'data'; src: string }
+
+/** Extract stored-image references from a ContentBlock list (reference form). */
+function nodeImagesOf(content: unknown): RailImage[] {
+  if (!Array.isArray(content)) return []
+  const out: RailImage[] = []
+  for (const block of content) {
+    if (block === null || typeof block !== 'object') continue
+    const b = block as { type?: unknown; attachment?: unknown }
+    if (b.type !== 'image') continue
+    const a = b.attachment
+    if (a === null || typeof a !== 'object') continue
+    const ref = a as { attachmentId?: unknown; mediaType?: unknown; width?: unknown; height?: unknown }
+    if (typeof ref.attachmentId !== 'string' || ref.attachmentId === '') continue
+    out.push({
+      attachmentId: ref.attachmentId,
+      mediaType: typeof ref.mediaType === 'string' ? ref.mediaType : 'image/png',
+      width: typeof ref.width === 'number' ? ref.width : 0,
+      height: typeof ref.height === 'number' ? ref.height : 0,
+    })
+  }
+  return out
+}
+
+/** Convert a ContentBlock list to displayable image specs; inline base64
+ *  blocks (rare in replayed history) become data URLs on the spot. */
+function imageSpecsOfContent(content: unknown): ImageSpec[] {
+  const specs: ImageSpec[] = []
+  if (!Array.isArray(content)) return specs
+  for (const block of content) {
+    if (block === null || typeof block !== 'object') continue
+    const b = block as { type?: unknown; attachment?: unknown; data?: unknown; mediaType?: unknown }
+    if (b.type !== 'image') continue
+    const a = b.attachment
+    if (a !== null && typeof a === 'object') {
+      const ref = a as { attachmentId?: unknown; mediaType?: unknown }
+      if (typeof ref.attachmentId === 'string' && ref.attachmentId !== '') {
+        specs.push({ kind: 'ref', attachmentId: ref.attachmentId, mediaType: typeof ref.mediaType === 'string' ? ref.mediaType : 'image/png' })
+        continue
+      }
+    }
+    if (typeof b.data === 'string' && b.data !== '') {
+      specs.push({ kind: 'data', src: `data:${typeof b.mediaType === 'string' ? b.mediaType : 'image/png'};base64,${b.data}` })
+    }
+  }
+  return specs
+}
+
+/** Normalize one projection entry to a rail message. */
+function normalize(m: unknown): RailMessage | null {
+  if (m === null || typeof m !== 'object') return null
+  const o = m as Record<string, unknown>
+  if (typeof o.seq !== 'number') return null
+  // Host projection emits `text`; keep `preview` as a defensive fallback in
+  // case an older projection payload is still cached in the browser.
+  const text = typeof o.text === 'string' ? o.text : typeof o.preview === 'string' ? o.preview : ''
+  const images = Array.isArray(o.images)
+    ? o.images.map(nodeImagesOfEntry).filter((i): i is RailImage => i !== null)
+    : undefined
+  return {
+    seq: o.seq,
+    time: typeof o.time === 'number' ? o.time : 0,
+    text,
+    // Older projections lack hasImage; defensive default false.
+    hasImage: o.hasImage === true,
+    ...(images !== undefined && images.length > 0 ? { images } : {}),
+    ...(typeof o.key === 'string' ? { key: o.key } : {}),
+    ...(typeof o.id === 'string' ? { id: o.id } : {}),
+  }
+}
+
+/** Normalize one projection entry of the `images` array (wire form). */
+function nodeImagesOfEntry(v: unknown): RailImage | null {
+  if (v === null || typeof v !== 'object') return null
+  const o = v as Record<string, unknown>
+  if (typeof o.attachmentId !== 'string' || o.attachmentId === '') return null
+  return {
+    attachmentId: o.attachmentId,
+    mediaType: typeof o.mediaType === 'string' ? o.mediaType : 'image/png',
+    width: typeof o.width === 'number' ? o.width : 0,
+    height: typeof o.height === 'number' ? o.height : 0,
+  }
 }
 
 /** Extract preview text from a user message's ContentBlock list. */
@@ -193,25 +313,6 @@ function userHasImage(content: unknown): boolean {
     && (block as { type?: unknown }).type === 'image')
 }
 
-/** Normalize one projection entry to a rail message. */
-function normalize(m: unknown): RailMessage | null {
-  if (m === null || typeof m !== 'object') return null
-  const o = m as Record<string, unknown>
-  if (typeof o.seq !== 'number') return null
-  // Host projection emits `text`; keep `preview` as a defensive fallback in
-  // case an older projection payload is still cached in the browser.
-  const text = typeof o.text === 'string' ? o.text : typeof o.preview === 'string' ? o.preview : ''
-  return {
-    seq: o.seq,
-    time: typeof o.time === 'number' ? o.time : 0,
-    text,
-    // Older projections lack hasImage; defensive default false.
-    hasImage: o.hasImage === true,
-    ...(typeof o.key === 'string' ? { key: o.key } : {}),
-    ...(typeof o.id === 'string' ? { id: o.id } : {}),
-  }
-}
-
 /** Fallback collector: enumerate user messages from the loaded chat nodes. */
 function collectFromNodes(snapshot: unknown): RailMessage[] {
   const out: RailMessage[] = []
@@ -227,7 +328,15 @@ function collectFromNodes(snapshot: unknown): RailMessage[] {
     if (typeof data.time !== 'number' || !Array.isArray(data.content)) continue
     const key = typeof n.key === 'string' ? n.key : undefined
     if (key === undefined) continue
-    out.push({ seq: typeof n.anchorSeq === 'number' ? n.anchorSeq : 0, time: data.time, text: userTextOf(data.content), hasImage: userHasImage(data.content), key })
+    const images = nodeImagesOf(data.content)
+    out.push({
+      seq: typeof n.anchorSeq === 'number' ? n.anchorSeq : 0,
+      time: data.time,
+      text: userTextOf(data.content),
+      hasImage: userHasImage(data.content),
+      ...(images.length > 0 ? { images } : {}),
+      key,
+    })
   }
   out.sort((a, b) => a.seq - b.seq)
   return out
@@ -238,6 +347,40 @@ function anchorKeyOf(m: RailMessage): string | undefined {
   if (typeof m.key === 'string' && m.key !== '') return m.key
   if (typeof m.id === 'string' && m.id !== '') return '13:input-message' + m.id
   return undefined
+}
+
+/** Full text of a rail message from the loaded chat nodes (uncapped),
+ *  falling back to the projection preview when the node is not mounted. */
+function fullTextOf(m: RailMessage, nodeSnapshot: unknown): string {
+  const key = anchorKeyOf(m)
+  const nodes = (nodeSnapshot as { chat?: { nodes?: Map<string, { data?: { content?: unknown } }> } } | undefined)?.chat?.nodes
+  const node = key === undefined ? undefined : nodes?.get(key)
+  const content = node?.data?.content
+  if (Array.isArray(content)) {
+    let out = ''
+    for (const block of content) {
+      if (block !== null && typeof block === 'object' && (block as { type?: unknown }).type === 'text'
+        && typeof (block as { text?: unknown }).text === 'string') {
+        out += (block as { text: string }).text
+      }
+    }
+    const full = out.trim()
+    if (full !== '') return full
+  }
+  return m.text
+}
+
+/** Displayable tip images for one rail message: host projection references
+ *  first (works even before the node window covers the message), then the
+ *  loaded chat node's content blocks. */
+function tipImagesOf(m: RailMessage, nodeSnapshot: unknown): ImageSpec[] {
+  if (Array.isArray(m.images) && m.images.length > 0) {
+    return m.images.map(img => ({ kind: 'ref', attachmentId: img.attachmentId, mediaType: img.mediaType }))
+  }
+  const key = anchorKeyOf(m)
+  const nodes = (nodeSnapshot as { chat?: { nodes?: Map<string, { data?: { content?: unknown } }> } } | undefined)?.chat?.nodes
+  const node = key === undefined ? undefined : nodes?.get(key)
+  return imageSpecsOfContent(node?.data?.content)
 }
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -309,6 +452,85 @@ async function jumpToMessage(
   return true
 }
 
+// ---- tip image thumbnails ----
+
+/** Session-scoped browser URL cache for resolved attachment bytes (one entry
+ *  per session:attachment; a failed load evicts itself so the next hover
+ *  retries instead of showing a permanently broken thumbnail). */
+const thumbUrls = new Map<string, Promise<string>>()
+
+/** Minimal RpcResult shape of session.readAttachment (contract level). */
+interface ReadAttachmentResult {
+  ok: boolean
+  value?: { attachment?: { mediaType?: string }; data?: Uint8Array }
+  error?: { code?: string; message?: string }
+}
+
+type ReadAttachmentFn = (attachmentId: string) => Promise<ReadAttachmentResult>
+
+/** Fallback data URL when the browser cannot mint object URLs. */
+function bytesToDataUrl(data: Uint8Array, mediaType: string): string {
+  let binary = ''
+  const chunk = 0x8000
+  for (let offset = 0; offset < data.length; offset += chunk) {
+    binary += String.fromCharCode(...data.subarray(offset, offset + chunk))
+  }
+  return `data:${mediaType};base64,${btoa(binary)}`
+}
+
+/** Resolve (and cache) one stored image to a displayable URL. */
+function resolveThumb(sessionId: string, read: ReadAttachmentFn, image: Pick<RailImage, 'attachmentId' | 'mediaType'>): Promise<string> {
+  const key = `${sessionId}:${image.attachmentId}`
+  let pending = thumbUrls.get(key)
+  if (pending === undefined) {
+    pending = read(image.attachmentId).then((result): string => {
+      if (!result.ok || result.value === undefined) {
+        throw new Error(result.error?.message ?? result.error?.code ?? 'readAttachment failed')
+      }
+      const data = result.value.data
+      if (data === undefined) throw new Error('readAttachment resolved no bytes')
+      const mediaType = result.value.attachment?.mediaType ?? image.mediaType
+      if (typeof URL.createObjectURL === 'function') {
+        return URL.createObjectURL(new Blob([data as BlobPart], { type: mediaType }))
+      }
+      return bytesToDataUrl(data, mediaType)
+    })
+    void pending.catch(() => { thumbUrls.delete(key) })
+    thumbUrls.set(key, pending)
+  }
+  return pending
+}
+
+/** One tip thumbnail: resolves its attachment lazily, shows a pulsing
+ *  placeholder while loading, and removes itself on failure. */
+function TipThumb({ spec, sessionId, read }: {
+  spec: ImageSpec
+  sessionId: string
+  read: ReadAttachmentFn
+}): ReactNode {
+  const [src, setSrc] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const specKey = spec.kind === 'ref' ? `ref:${spec.attachmentId}` : 'data'
+  useEffect(() => {
+    let alive = true
+    setSrc(null)
+    setFailed(false)
+    if (spec.kind === 'data') {
+      setSrc(spec.src)
+      return () => { alive = false }
+    }
+    resolveThumb(sessionId, read, spec)
+      .then((url) => { if (alive) setSrc(url) })
+      .catch(() => { if (alive) setFailed(true) })
+    return () => { alive = false }
+    // spec is a fresh object each render; the string key is the stable identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [specKey, sessionId, read])
+  if (failed) return null
+  if (src === null) return createElement('div', { className: S.tipImgPh, 'aria-hidden': true })
+  return createElement('img', { className: S.tipImg, src, alt: '', draggable: false })
+}
+
 // ---- component ----
 interface TimelineRailProps {
   useProjection: (key: string) => { messages?: unknown[] } | undefined
@@ -348,8 +570,7 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
   // collapsed state the item rect is only 36px wide, so a tip positioned
   // there would be wrong once the rail expands.
   const [tip, setTip] = useState<{ index: number; x: number; y: number } | null>(null)
-  const navRef = useRef<HTMLDivElement | null>(null)
-  // True only after the expand animation has fully settled; the width
+  const navRef = useRef<HTMLDivElement | null>(null)  // True only after the expand animation has fully settled; the width
   // transition takes ~250ms after `show` flips, and item rects are only
   // stable once it finishes. Tip positioning must wait for this.
   const expandedRef = useRef(false)
@@ -444,26 +665,16 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
     }
   }, [show])
 
-  /** Full text of a rail message from the loaded chat nodes (uncapped),
-   *  falling back to the projection preview when the node is not mounted. */
-  const fullTextOf = (m: RailMessage): string => {
-    const key = anchorKeyOf(m)
-    const nodes = (nodeSnapshot as { chat?: { nodes?: Map<string, { data?: { content?: unknown } }> } } | undefined)?.chat?.nodes
-    const node = key === undefined ? undefined : nodes?.get(key)
-    const content = node?.data?.content
-    if (Array.isArray(content)) {
-      let out = ''
-      for (const block of content) {
-        if (block !== null && typeof block === 'object' && (block as { type?: unknown }).type === 'text'
-          && typeof (block as { text?: unknown }).text === 'string') {
-          out += (block as { text: string }).text
-        }
-      }
-      const full = out.trim()
-      if (full !== '') return full
-    }
-    return m.text
-  }
+  // Session-scoped attachment reader for tip thumbnails (stable identity so
+  // TipThumb effects do not re-run every render; resolveThumb caches anyway).
+  const readThumb = useMemo<ReadAttachmentFn | undefined>(() => {
+    if (sessionId === undefined) return undefined
+    const s = (sessionsService.binding(sessionId) as unknown as
+      { session?: { readAttachment?: ReadAttachmentFn } } | undefined)?.session
+    return s?.readAttachment === undefined
+      ? undefined
+      : (id: string) => s.readAttachment!(id)
+  }, [sessionId, sessionsService])
 
   // Background full-history load: follow the runtime's authoritative hasMore
   // flag, but STOP as soon as the projection delivers.
@@ -570,7 +781,23 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
       children: [
         createElement('span', { className: S.num }, `#${i + 1}`),
         createElement('span', { className: S.title }, m.text === '' ? t.noText : m.text),
-        m.hasImage ? createElement('span', { className: S.img, title: t.hasImage, 'aria-label': t.hasImage }) : null,
+        m.hasImage
+          ? createElement('span', { className: S.img, role: 'img', 'aria-label': t.hasImage },
+            createElement('svg', {
+              viewBox: '0 0 16 16',
+              width: 12,
+              height: 12,
+              fill: 'none',
+              stroke: 'currentColor',
+              strokeWidth: 1.4,
+              strokeLinecap: 'round',
+              strokeLinejoin: 'round',
+              'aria-hidden': true,
+            },
+            createElement('rect', { x: 1.7, y: 2.7, width: 12.6, height: 10.6, rx: 2.2 }),
+            createElement('circle', { cx: 5.6, cy: 6.4, r: 1.15, fill: 'currentColor', stroke: 'none' }),
+            createElement('path', { d: 'M2.5 11.6l3.6-3.1 2.6 2.2 2.1-1.9 3.3 2.8' })))
+          : null,
         createElement('span', { className: S.time }, relativeTime(m.time, t)),
         createElement('span', { className: S.ind, 'aria-hidden': true },
           createElement('span', { className: S.line })),
@@ -595,12 +822,33 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
         ...items,
       ],
     }),
-    // Full-content panel: anchored to the left of the hovered item.
+    // Full-content panel: anchored to the left of the hovered item. Images
+    // stack above the text; a message whose image cannot be resolved (no
+    // projection refs and unloaded node) shows a quiet "has image" badge.
     tip !== null && tip.index >= 0 && tip.index < messages.length
       ? createElement('div', {
           className: S.tip,
           style: { left: `${tip.x}px`, top: `${tip.y}px`, transform: 'translateX(-100%)' },
-        }, fullTextOf(messages[tip.index]) || t.noText)
+        }, (() => {
+          const m = messages[tip.index]
+          const specs = tipImagesOf(m, nodeSnapshot)
+          const children: ReactNode[] = []
+          if (specs.length > 0 && readThumb !== undefined) {
+            // Only the first image renders; the rest collapse into a "+N"
+            // badge so a many-image message cannot push the tip past its
+            // viewport cap (the stacked thumbnails did).
+            children.push(createElement('div', { className: S.tipImgs, key: 'imgs' },
+              createElement('div', { className: S.tipImgWrap, key: 'img' },
+                createElement(TipThumb, { spec: specs[0], sessionId: sessionId as string, read: readThumb }),
+                specs.length > 1
+                  ? createElement('span', { className: S.tipImgCount, 'aria-hidden': true }, `+${specs.length - 1}`)
+                  : null)))
+          } else if (m.hasImage) {
+            children.push(createElement('span', { className: S.tipBadge, key: 'badge' }, t.hasImage))
+          }
+          children.push(createElement('span', { key: 'text' }, fullTextOf(m, nodeSnapshot) || t.noText))
+          return children
+        })())
       : null],
     document.body,
   )
@@ -615,4 +863,4 @@ function apply(ctx: ClientContext): void {
   }, TimelineRail))
 }
 
-export { apply, TimelineRail }
+export { apply, TimelineRail, imageSpecsOfContent, normalize }

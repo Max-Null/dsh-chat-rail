@@ -48,14 +48,21 @@ test('registers the chatRail projection', () => {
   const def = loadProjection()
   assert.equal(def.key, 'chatRail')
   assert.deepEqual(def.init(), { messages: [] })
-  assert.equal(def.stateVersion, 5)
+  assert.equal(def.stateVersion, 6)
 })
 
 test('appends an anchor for a direct user message', () => {
   const def = loadProjection()
   const state = def.apply(def.init(), userMessageEvent())
   assert.deepEqual(state, {
-    messages: [{ seq: 12, time: 1_752_000_000_000, text: 'hello', id: 'msg-1', hasImage: false }],
+    messages: [{
+      seq: 12,
+      time: 1_752_000_000_000,
+      text: 'hello',
+      id: 'msg-1',
+      hasImage: false,
+      images: [],
+    }],
   })
 })
 
@@ -94,6 +101,40 @@ test('ignores non-user/message events', () => {
   const def = loadProjection()
   const state = def.apply(def.init(), { type: 'assistant/message', seq: 13, time: 1, data: {} })
   assert.deepEqual(state, { messages: [] })
+})
+
+test('carries stored-image references for image blocks', () => {
+  const def = loadProjection()
+  const state = def.apply(def.init(), userMessageEvent({
+    content: [
+      { type: 'text', text: '看图' },
+      {
+        type: 'image',
+        attachment: { attachmentId: 'att-1', mediaType: 'image/png', bytes: 123, width: 640, height: 480 },
+      },
+      {
+        type: 'image',
+        attachment: { attachmentId: 'att-2', mediaType: 'image/jpeg', bytes: 456, width: 100, height: 100 },
+      },
+    ],
+  }))
+  const m = (state as { messages: { hasImage: boolean; images: { attachmentId: string; mediaType: string; width: number; height: number }[] }[] }).messages[0]
+  assert.equal(m.hasImage, true)
+  assert.deepEqual(m.images, [
+    { attachmentId: 'att-1', mediaType: 'image/png', width: 640, height: 480 },
+    { attachmentId: 'att-2', mediaType: 'image/jpeg', width: 100, height: 100 },
+  ])
+})
+
+test('marks inline image blocks but never ships their base64 payload', () => {
+  const def = loadProjection()
+  const state = def.apply(def.init(), userMessageEvent({
+    content: [{ type: 'image', mediaType: 'image/png', data: 'iVBORw0KGgo=' }],
+  }))
+  const m = (state as { messages: { hasImage: boolean; images: unknown[]; text: string }[] }).messages[0]
+  assert.equal(m.hasImage, true)
+  assert.deepEqual(m.images, [])
+  assert.equal(m.text, '')
 })
 
 test('view returns the accumulated state', () => {
