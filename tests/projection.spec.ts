@@ -49,14 +49,14 @@ test('registers the chatRail projection', () => {
   const def = loadProjection()
   assert.equal(def.key, 'chatRail')
   assert.deepEqual(def.init(), { messages: [] })
-  assert.equal(def.stateVersion, 4)
+  assert.equal(def.stateVersion, 5)
 })
 
 test('appends an anchor for a direct user message', () => {
   const def = loadProjection()
   const state = def.apply(def.init(), userMessageEvent())
   assert.deepEqual(state, {
-    messages: [{ seq: 12, time: 1_752_000_000_000, text: 'hello', id: 'msg-1' }],
+    messages: [{ seq: 12, time: 1_752_000_000_000, text: 'hello', id: 'msg-1', hasImage: false }],
   })
 })
 
