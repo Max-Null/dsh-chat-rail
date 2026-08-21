@@ -353,10 +353,28 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
   // transition takes ~250ms after `show` flips, and item rects are only
   // stable once it finishes. Tip positioning must wait for this.
   const expandedRef = useRef(false)
+  // Last observed pointer position over the rail. A mouseenter that arrives
+  // before the width transition cannot show the tip (rects unstable), yet the
+  // enter event is already gone by the time the animation ends — the settle
+  // handler re-hit-tests the cursor against this position to show the tip for
+  // the node still under the pointer.
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   // Aborts an in-flight jump (component unmount or a newer click superseding
   // an older one), so the loadOlder/DOM-poll loops stop promptly.
   const jumpAbortRef = useRef<AbortController | null>(null)
   useEffect(() => () => jumpAbortRef.current?.abort(), [])
+
+  // Track the cursor over the rail for the expand-settled tip re-hit-test
+  // (the `show` effect's settle handler reads lastPointerRef). Native
+  // listener: plain DOM events keep the callback typed without React
+  // synthetic-event generics in the hand-written createElement props.
+  useEffect(() => {
+    const el = navRef.current
+    if (el === null) return
+    const onMove = (e: PointerEvent) => { lastPointerRef.current = { x: e.clientX, y: e.clientY } }
+    el.addEventListener('pointermove', onMove, { passive: true })
+    return () => el.removeEventListener('pointermove', onMove)
+  }, [])
 
   /** Position the tip against the item's CURRENT (post-expand) rect. */
   const positionTip = (index: number) => {
@@ -392,13 +410,38 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
     }
     const el = navRef.current
     if (el === null) return
-    const onTransitionEnd = (e: TransitionEvent) => {
-      if (e.propertyName !== 'width') return
+    let settled = false
+    const settle = () => {
+      if (settled) return
+      settled = true
       expandedRef.current = true
       el.removeEventListener('transitionend', onTransitionEnd)
+      clearTimeout(timer)
+      // Re-hit-test the cursor: a mouseenter that fired before the width
+      // transition could not show the tip (rects were still unstable), and
+      // the enter event is long gone once the animation ends. If the pointer
+      // still sits on a rail item, position that item's tip now.
+      const p = lastPointerRef.current
+      if (p !== null) {
+        const hit = document.elementFromPoint(p.x, p.y)
+        const item = hit === null ? null : hit.closest('[data-crl-index]')
+        const idx = item === null ? -1 : Number(item.getAttribute('data-crl-index'))
+        if (Number.isInteger(idx) && idx >= 0) positionTip(idx)
+      }
+    }
+    const onTransitionEnd = (e: TransitionEvent) => {
+      if (e.propertyName !== 'width') return
+      settle()
     }
     el.addEventListener('transitionend', onTransitionEnd)
-    return () => el.removeEventListener('transitionend', onTransitionEnd)
+    // Fallback for `prefers-reduced-motion: reduce` (the stylesheet disables
+    // the width transition, so `transitionend` never fires) and for any lost
+    // event: settle after the transition duration regardless.
+    const timer = setTimeout(settle, 300)
+    return () => {
+      el.removeEventListener('transitionend', onTransitionEnd)
+      clearTimeout(timer)
+    }
   }, [show])
 
   /** Full text of a rail message from the loaded chat nodes (uncapped),
