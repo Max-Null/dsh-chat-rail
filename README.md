@@ -1,5 +1,9 @@
 # @max-null/dsh-chat-rail
 
+本插件属于 **`@max-null/*` 插件系列**——这一系列共同构成 **[SSID（思灵 · Seek Soul in Darkness）](https://github.com/Max-Null/seek-soul-in-darkness)** 桌面体验。SSID 是整合它们的盒：`dsh-capture` · `dsh-chat-rail` · `dsh-chinese-thinking` · `dsh-draft-polish` · `dsh-guardian` · `dsh-habit` · `dsh-header-unify` · `dsh-memory` · `dsh-node-appearance` · `dsh-plugin-center` · `dsh-skill-mcp-center` · `dsh-ssid-panels` · `dsh-ssid-zh-ui`。
+
+This plugin belongs to the **`@max-null/*` family** — a set of plugins that together form the **[SSID (思灵 · Seek Soul in Darkness)](https://github.com/Max-Null/seek-soul-in-darkness)** desktop experience.
+
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的**画卷式消息导航栏**：会话面板右侧的一条竖排导航，每条用户消息一个指示点，scroll-spy 跟随阅读位置，hover 展开画卷查看消息列表，点击跳转任意历史消息。
 
 > 不同于市面上"面板弹出式"的导航插件，dsh-chat-rail 采用**画卷式展开**：收起时是一条干净的竖条，hover 时从右往左平滑展开，像打开画卷一样。
@@ -60,10 +64,6 @@ dsh plugin --profile <name> add @max-null/dsh-chat-rail
 - 数据源优先序：`chatRail` 投影 → 已加载聊天节点 → 后台 loadOlder 循环
 
 ## SSID 系列
-
-本插件属于 **`@max-null/*` 插件系列**——这一系列共同构成 **[SSID（思灵 · Seek Soul in Darkness）](https://github.com/Max-Null/seek-soul-in-darkness)** 桌面体验。SSID 是整合它们的盒：`dsh-capture` · `dsh-chat-rail` · `dsh-chinese-thinking` · `dsh-draft-polish` · `dsh-guardian` · `dsh-habit` · `dsh-header-unify` · `dsh-memory` · `dsh-node-appearance` · `dsh-plugin-center` · `dsh-skill-mcp-center` · `dsh-ssid-panels` · `dsh-ssid-zh-ui`。
-
-This plugin belongs to the **`@max-null/*` family** — a set of plugins that together form the **[SSID (思灵 · Seek Soul in Darkness)](https://github.com/Max-Null/seek-soul-in-darkness)** desktop experience.
 
 ## 开发
 
