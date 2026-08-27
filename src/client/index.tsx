@@ -177,11 +177,20 @@ const css = [
   '.crl_show .crl_favStar{display:inline-flex;animation:crl-fade .18s ease}',
   '.crl_item.crl_favItem .crl_line{background-color:#ffd166}',
   'body[data-ds-dark-theme] .crl_item.crl_favItem .crl_line,[data-theme=\'dark\'] .crl_item.crl_favItem .crl_line,.dark .crl_item.crl_favItem .crl_line{background-color:#ffd166}',
-  // Rail-top favorites-only toggle: a star pill above the rows; on state
-  // fills the star (yellow) and filters the list to favorited messages.
-  '.crl_favToggle{flex-shrink:0;display:flex;align-items:center;justify-content:center;width:26px;height:26px;margin:0 0 6px;padding:0;border:none;border-radius:13px;background:transparent;color:rgba(0,0,0,.4);cursor:pointer;transition:background .15s ease,color .15s ease}',
+  // A favorited line that is also the current reading position keeps its
+  // yellow identity — the generic active glow is blue, which pairs miserably
+  // with the gold line, so the favorite-active state recasts the glow in the
+  // same warm tone.
+  '.crl_item.crl_favItem.crl_active .crl_line{background-color:#ffd166;box-shadow:0 0 6px #ffd166}',
+  // Rail-top favorites-only toggle: a round icon pill in the collapsed state;
+  // on expand it becomes a full label row (star + "bookmarks only") so the
+  // control reads as a real rail header action instead of a stray dot.
+  '.crl_favToggle{flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:26px;margin:0 0 6px;padding:0;border:none;border-radius:13px;background:transparent;color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
   '.crl_favToggle:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.75)}',
   '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
+  '.crl_show .crl_favToggle{width:auto;height:26px;margin:0 6px 8px;padding:0 10px;border-radius:13px;align-self:flex-start}',
+  '.crl_favToggleLabel{display:none}',
+  '.crl_show .crl_favToggleLabel{display:inline}',
   'body[data-ds-dark-theme] .crl_favToggle,[data-theme=\'dark\'] .crl_favToggle,.dark .crl_favToggle{color:rgba(255,255,255,.4)}',
   'body[data-ds-dark-theme] .crl_favToggle:hover,[data-theme=\'dark\'] .crl_favToggle:hover,.dark .crl_favToggle:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.85)}',
   'body[data-ds-dark-theme] .crl_favToggle.crl_on,[data-theme=\'dark\'] .crl_favToggle.crl_on,.dark .crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.18)}',
@@ -220,6 +229,7 @@ const S = {
   favStar: 'crl_favStar',
   favItem: 'crl_favItem',
   favToggle: 'crl_favToggle',
+  favToggleLabel: 'crl_favToggleLabel',
 }
 
 // ---- data helpers ----
@@ -1179,7 +1189,9 @@ function TimelineRail({ useProjection, sessionId, sessionsService, inputActions,
       onMouseLeave: () => setShow(false),
       children: [
         // Favorites-only filter: a star pill above the rows. On state fills
-        // the star (yellow) and narrows the rail to favorited messages.
+        // the star (yellow) and narrows the rail to favorited messages; the
+        // label ("bookmarks only") only shows once the rail expands — the
+        // collapsed 36px capsule keeps a clean round icon.
         createElement('button', {
           type: 'button',
           key: 'favToggle',
@@ -1189,16 +1201,19 @@ function TimelineRail({ useProjection, sessionId, sessionsService, inputActions,
           title: t.favOnly,
           onMouseEnter: (e: MouseEvent) => e.stopPropagation(),
           onClick: () => setFavOnly((v) => !v),
-          children: createElement('svg', {
-            viewBox: '0 0 24 24',
-            width: 14,
-            height: 14,
-            fill: favOnly ? 'currentColor' : 'none',
-            stroke: 'currentColor',
-            strokeWidth: 2,
-            strokeLinejoin: 'round',
-            'aria-hidden': true,
-          }, createElement('path', { d: STAR_PATH })),
+          children: [
+            createElement('svg', {
+              viewBox: '0 0 24 24',
+              width: 14,
+              height: 14,
+              fill: favOnly ? 'currentColor' : 'none',
+              stroke: 'currentColor',
+              strokeWidth: 2,
+              strokeLinejoin: 'round',
+              'aria-hidden': true,
+            }, createElement('path', { d: STAR_PATH })),
+            createElement('span', { className: S.favToggleLabel }, t.favOnly),
+          ],
         }),
         jumping ? createElement('div', { className: S.loading, key: 'loading' },
           createElement('span', { className: S.loadingLabel }, t.loading)) : null,
