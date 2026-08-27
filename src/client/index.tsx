@@ -23,14 +23,14 @@
  * Mounted in conversation.input.dock, portal-rendered to body.
  */
 
-import { createElement, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the input.dock entry).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 
-export const inject = ['slots', 'sessions']
+export const inject = ['slots', 'sessions', 'conversation']
 
 // ---- i18n (DSH locale-aware, zh/en) ----
 type LocaleId = 'zh' | 'en'
@@ -46,6 +46,11 @@ const STRINGS: Record<LocaleId, Record<string, string>> = {
     timeMinutes: '{n}分钟前',
     timeHours: '{n}小时前',
     timeDays: '{n}天前',
+    fav: '收藏消息',
+    unfav: '取消收藏',
+    fill: '填充到输入框',
+    filled: '已填入输入框',
+    favOnly: '只显示收藏',
   },
   en: {
     railLabel: 'Message rail',
@@ -58,6 +63,11 @@ const STRINGS: Record<LocaleId, Record<string, string>> = {
     timeMinutes: '{n}m ago',
     timeHours: '{n}h ago',
     timeDays: '{n}d ago',
+    fav: 'Bookmark message',
+    unfav: 'Remove bookmark',
+    fill: 'Fill into input',
+    filled: 'Filled into input',
+    favOnly: 'Bookmarks only',
   },
 }
 
@@ -150,6 +160,29 @@ const css = [
   'body[data-ds-dark-theme] .crl_tipImg,[data-theme=\'dark\'] .crl_tipImg,.dark .crl_tipImg{border-color:var(--dsw-alias-border-l2,var(--border-default,rgba(255,255,255,.14)))}',
   '.crl_tipBadge{display:inline-block;margin-bottom:8px;padding:0 7px;font-size:10px;line-height:16px;border-radius:9px;background:var(--dsw-alias-surface-sunken,var(--bg-muted,rgba(0,0,0,.06)));color:var(--dsw-alias-label-secondary,var(--text-muted,rgba(0,0,0,.45)))}',
   '@keyframes crl-pulse{0%,100%{opacity:.45}50%{opacity:.85}}',
+  // Message action buttons injected next to the copy button (DOM row: the
+  // user-message IconActions row). Sized like the host's own 16px icon
+  // actions; the star lights yellowish (#ffd166, milestone-compatible) once
+  // the message is favorited.
+  '.crl_msgAct{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin:0;padding:0;border:none;border-radius:4px;background:transparent;color:rgba(0,0,0,.45);cursor:pointer;transition:background .15s ease,color .15s ease}',
+  '.crl_msgAct:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.8)}',
+  'body[data-ds-dark-theme] .crl_msgAct,[data-theme=\'dark\'] .crl_msgAct,.dark .crl_msgAct{color:rgba(255,255,255,.5)}',
+  'body[data-ds-dark-theme] .crl_msgAct:hover,[data-theme=\'dark\'] .crl_msgAct:hover,.dark .crl_msgAct:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.95)}',
+  '.crl_msgAct.crl_fav.crl_on{color:#ffd166}',
+  '.crl_msgAct.crl_fav.crl_on svg{fill:currentColor}',
+  // Rail row favorite badge + yellow indicator line for favorited messages.
+  '.crl_favStar{display:none;flex-shrink:0;align-items:center;justify-content:center;width:14px;height:14px;margin-right:6px;color:#ffd166}',
+  '.crl_show .crl_favStar{display:inline-flex;animation:crl-fade .18s ease}',
+  '.crl_item.crl_favItem .crl_line{background-color:#ffd166}',
+  'body[data-ds-dark-theme] .crl_item.crl_favItem .crl_line,[data-theme=\'dark\'] .crl_item.crl_favItem .crl_line,.dark .crl_item.crl_favItem .crl_line{background-color:#ffd166}',
+  // Rail-top favorites-only toggle: a star pill above the rows; on state
+  // fills the star (yellow) and filters the list to favorited messages.
+  '.crl_favToggle{flex-shrink:0;display:flex;align-items:center;justify-content:center;width:26px;height:26px;margin:0 0 6px;padding:0;border:none;border-radius:13px;background:transparent;color:rgba(0,0,0,.4);cursor:pointer;transition:background .15s ease,color .15s ease}',
+  '.crl_favToggle:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.75)}',
+  '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
+  'body[data-ds-dark-theme] .crl_favToggle,[data-theme=\'dark\'] .crl_favToggle,.dark .crl_favToggle{color:rgba(255,255,255,.4)}',
+  'body[data-ds-dark-theme] .crl_favToggle:hover,[data-theme=\'dark\'] .crl_favToggle:hover,.dark .crl_favToggle:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.85)}',
+  'body[data-ds-dark-theme] .crl_favToggle.crl_on,[data-theme=\'dark\'] .crl_favToggle.crl_on,.dark .crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.18)}',
   '@media (prefers-reduced-motion:reduce){.crl_nav,.crl_title,.crl_num,.crl_time,.crl_line{transition:none}.crl_tipImgPh{animation:none}}',
 ].join('')
 
@@ -182,10 +215,231 @@ const S = {
   tipImgCount: 'crl_tipImgCount',
   tipImgPh: 'crl_tipImgPh',
   tipBadge: 'crl_tipBadge',
+  favStar: 'crl_favStar',
+  favItem: 'crl_favItem',
+  favToggle: 'crl_favToggle',
 }
 
 // ---- data helpers ----
 const NOOP_STORE = { getSnapshot: () => undefined, subscribe: () => () => {} }
+
+// ---- favorites (persisted per-session bookmark store) ----
+// Shape: Record<sessionId, messageId[]>. The durable message id is the same
+// identity the host projection emits (`id`) and the DOM anchor encodes
+// (`13:input-message<id>`), so DOM-injected buttons and the rail agree on
+// the key with no projection hop. localStorage keeps it across reloads;
+// the module-level snapshot cache + listener set drive useSyncExternalStore
+// (rail) and the injected DOM buttons (refresh on toggle).
+const FAVORITES_KEY = '@max-null/dsh-chat-rail:favorites'
+type FavoritesMap = Record<string, string[]>
+
+/** Read the persisted favorites map (defensive: malformed JSON → {}). */
+export function readFavorites(): FavoritesMap {
+  if (typeof localStorage === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY)
+    if (raw === null) return {}
+    const value: unknown = JSON.parse(raw)
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as FavoritesMap : {}
+  } catch {
+    return {}
+  }
+}
+
+/** Write the favorites map; storage failures are non-fatal (session-only mode). */
+function writeFavorites(map: FavoritesMap): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(map))
+  } catch {
+    // Quota / private mode: the in-memory snapshot keeps working for this page.
+  }
+}
+
+/** Normalized id list for one session (drops non-string entries). */
+export function favoriteIdsOf(map: FavoritesMap, sessionId: string): string[] {
+  const list = map[sessionId]
+  return Array.isArray(list) ? list.filter((id): id is string => typeof id === 'string') : []
+}
+
+/** Toggle one id in a list (stable new array; no in-place mutation). */
+export function toggleFavoriteId(list: string[], id: string): string[] {
+  return list.includes(id) ? list.filter((candidate) => candidate !== id) : [...list, id]
+}
+
+/** Whether one message is favorited in one session. */
+export function isFavorite(map: FavoritesMap, sessionId: string, messageId: string): boolean {
+  return favoriteIdsOf(map, sessionId).includes(messageId)
+}
+
+let favoritesCache: FavoritesMap | null = null
+const favoritesListeners = new Set<() => void>()
+
+/** Stable snapshot for useSyncExternalStore (loaded once, cached until toggle). */
+function favoritesSnapshot(): FavoritesMap {
+  if (favoritesCache === null) favoritesCache = readFavorites()
+  return favoritesCache
+}
+
+/** Subscribe to favorites changes; returns the unsubscribe. */
+function subscribeFavorites(listener: () => void): () => void {
+  favoritesListeners.add(listener)
+  return () => { favoritesListeners.delete(listener) }
+}
+
+/** Toggle one message's favorite state: snapshot → new map → persist → notify. */
+function toggleFavorite(sessionId: string, messageId: string): void {
+  const next = { ...favoritesSnapshot() }
+  next[sessionId] = toggleFavoriteId(favoriteIdsOf(favoritesSnapshot(), sessionId), messageId)
+  favoritesCache = next
+  writeFavorites(next)
+  for (const listener of [...favoritesListeners]) listener()
+}
+
+/** Remember the messageId read off a DOM anchor key (`13:input-message<id>`). */
+export function messageIdOfAnchorKey(key: string): string {
+  return key.startsWith('13:input-message') ? key.slice('13:input-message'.length) : key
+}
+
+/** The favorite key of one rail message: the durable id when present (host
+ *  projection), otherwise the id reconstructed from the node anchor (the
+ *  loaded-node fallback path). */
+function favoriteIdOfMessage(m: Pick<RailMessage, 'id' | 'key'>): string {
+  if (typeof m.id === 'string' && m.id !== '') return m.id
+  if (typeof m.key === 'string') return messageIdOfAnchorKey(m.key)
+  return ''
+}
+
+// ---- message-action injector (DOM) ----
+// User-message rows have no official action slot (assistant-actions serves
+// assistant turns only), so the star (favorite) and plus (fill-to-input)
+// buttons are injected next to the copy button of each user row. The rows
+// are located by their anchor key so history paging and re-renders both
+// land; the injector is a MutationObserver that re-scans after any DOM
+// change and never double-injects (row marker).
+//
+// Runtime wiring lives in a module-level context the rail component updates
+// every render (session id + handlers), so the pure DOM buttons stay tiny:
+// they only read data attributes and call context handlers.
+const actionCtx: {
+  sessionId: string | undefined
+  onToggleFavorite: (messageId: string) => void
+  onFill: (messageId: string) => void
+} = {
+  sessionId: undefined,
+  onToggleFavorite: () => {},
+  onFill: () => {},
+}
+
+/** aria-label values of the copy button across shipped locales (button sits
+ *  in the user row's IconActions; its parent is the row's action host). */
+const COPY_ARIA_LABELS = new Set(['复制', 'Copy', '已复制', 'Copied'])
+
+/** The copy button inside one user message row (null until rendered). */
+function copyButtonOf(row: HTMLElement): HTMLButtonElement | null {
+  for (const button of row.querySelectorAll<HTMLButtonElement>('button')) {
+    const label = button.getAttribute('aria-label')
+    if (label !== null && COPY_ARIA_LABELS.has(label)) return button
+  }
+  return null
+}
+
+/** Star SVG path (milestone-compatible glyph, 24-unit viewBox). */
+const STAR_PATH = 'm12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z'
+
+/** Build the favorite (star) button for one user message row. */
+function favoriteButtonOf(messageId: string, lang: Record<string, string>): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'crl_msgAct crl_fav'
+  button.dataset.crlStar = messageId
+  button.setAttribute('aria-pressed', String(isFavorite(favoritesSnapshot(), actionCtx.sessionId ?? '', messageId)))
+  button.title = isFavorite(favoritesSnapshot(), actionCtx.sessionId ?? '', messageId) ? lang.unfav : lang.fav
+  button.setAttribute('aria-label', button.title)
+  button.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    // Read the id off the dataset at click time: the injector may refresh the
+    // button for a new session and the closure must stay current.
+    const id = button.dataset.crlStar
+    if (id !== undefined) {
+      actionCtx.onToggleFavorite(id)
+      refreshFavoriteButton(button, lang)
+    }
+  })
+  return button
+}
+
+/** Build the fill-to-input (plus) button for one user message row. */
+function fillButtonOf(messageId: string, lang: Record<string, string>): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'crl_msgAct crl_fill'
+  button.dataset.crlFill = messageId
+  button.title = lang.fill
+  button.setAttribute('aria-label', lang.fill)
+  button.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>'
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const id = button.dataset.crlFill
+    if (id !== undefined) actionCtx.onFill(id)
+  })
+  return button
+}
+
+/** Sync one star button to its message's current favorite state. */
+function refreshFavoriteButton(button: HTMLButtonElement, lang: Record<string, string>): void {
+  const id = button.dataset.crlStar
+  if (id === undefined) return
+  const starred = isFavorite(favoritesSnapshot(), actionCtx.sessionId ?? '', id)
+  button.setAttribute('aria-pressed', String(starred))
+  button.dataset.starred = starred ? 'true' : undefined
+  button.classList.toggle('crl_on', starred)
+  button.title = starred ? lang.unfav : lang.fav
+  button.setAttribute('aria-label', button.title)
+}
+
+/** Refresh every injected star button (session switch / external toggle). */
+function refreshAllFavoriteButtons(lang: Record<string, string>): void {
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-crl-star]')) {
+    refreshFavoriteButton(button, lang)
+  }
+}
+
+/** Inject star + plus buttons into one user message row (idempotent). */
+function injectMessageActions(row: HTMLElement, lang: Record<string, string>): void {
+  // Already injected and both buttons still present → leave it alone.
+  if (row.dataset.crlActions === '1') {
+    if (row.querySelector('[data-crl-star]') !== null && row.querySelector('[data-crl-fill]') !== null) return
+    // React re-rendered the row and replaced the icons: fall through to re-inject.
+  }
+  const copy = copyButtonOf(row)
+  const messageId = messageIdOfAnchorKey(row.getAttribute('data-chat-anchor-key') ?? '')
+  if (copy === null || messageId === '') return
+  const star = favoriteButtonOf(messageId, lang)
+  star.dataset.starred = isFavorite(favoritesSnapshot(), actionCtx.sessionId ?? '', messageId) ? 'true' : undefined
+  star.classList.toggle('crl_on', isFavorite(favoritesSnapshot(), actionCtx.sessionId ?? '', messageId))
+  const fill = fillButtonOf(messageId, lang)
+  copy.before(star, fill)
+  row.dataset.crlActions = '1'
+}
+
+/** Start observing new user rows so injected actions follow history paging. */
+function startActionInjector(lang: Record<string, string>): () => void {
+  const scan = () => {
+    for (const row of document.querySelectorAll<HTMLElement>('[data-chat-anchor-key^="13:input-message"]')) {
+      injectMessageActions(row, lang)
+    }
+  }
+  const observer = new MutationObserver(scan)
+  if (typeof document !== 'undefined' && document.body !== null) {
+    observer.observe(document.body, { childList: true, subtree: true })
+  }
+  scan()
+  return () => observer.disconnect()
+}
 
 interface RailImage {
   attachmentId: string
@@ -536,6 +790,15 @@ interface TimelineRailProps {
   useProjection: (key: string) => { messages?: unknown[] } | undefined
   sessionId?: SessionId
   sessionsService: ISessions
+  /** Draft write + attachment-add face (session-scope framework injection). */
+  inputActions?: {
+    setDraft(text: string): void
+    addImages(ids: readonly string[]): boolean
+  } | undefined
+  /** Runtime draft-image registry (hosted by ui-conversation). */
+  conversation?: {
+    createDraftImages(files: readonly File[]): readonly { id: string }[]
+  } | undefined
 }
 
 /** Resolve copy for the current UI language (document lang, DSH sets zh/en). */
@@ -544,7 +807,7 @@ function langStrings(): Record<string, string> {
   return STRINGS[lang.startsWith('zh') ? 'zh' : 'en']
 }
 
-function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRailProps): ReactNode {
+function TimelineRail({ useProjection, sessionId, sessionsService, inputActions, conversation }: TimelineRailProps): ReactNode {
   const t = langStrings()
   const projected = useProjection('chatRail')
   const session = sessionId === undefined ? undefined : (sessionsService.binding(sessionId) as { session?: { subscribe(cb: () => void): () => void; getSnapshot(): unknown } } | undefined)?.session
@@ -561,6 +824,15 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
   if (messages.length === 0) {
     messages = collectFromNodes(nodeSnapshot)
   }
+
+  // Favorites: per-session persisted set + a "bookmarks only" filter that
+  // narrows the rail to favorited messages (mirrors dsh-milestone's
+  // bookmarksOnly toggle; the DOM-injected buttons share the same store).
+  const favorites = useSyncExternalStore(subscribeFavorites, favoritesSnapshot)
+  const [favOnly, setFavOnly] = useState(false)
+  const effectiveMessages = favOnly
+    ? messages.filter((m) => sessionId !== undefined && isFavorite(favorites, sessionId, favoriteIdOfMessage(m)))
+    : messages
 
   const [activeIndex, setActiveIndex] = useState(-1)
   const [show, setShow] = useState(false)
@@ -676,6 +948,67 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
       : (id: string) => s.readAttachment!(id)
   }, [sessionId, sessionsService])
 
+  // Fill-to-input (plus button): put the message's full text into the draft
+  // and re-attach its stored images through the official draft-image path
+  // (readAttachment → File → createDraftImages → addImages). Degrades to
+  // text-only when the conversation service or storage read is unavailable.
+  const fillToInput = useCallback((messageId: string) => {
+    const m = messages.find((candidate) => favoriteIdOfMessage(candidate) === messageId)
+    if (m === undefined || inputActions === undefined || sessionId === undefined) return
+    const text = fullTextOf(m, nodeSnapshot) || m.text
+    if (inputActions.setDraft !== undefined) inputActions.setDraft(text)
+    const specs = tipImagesOf(m, nodeSnapshot).filter((spec): spec is ImageSpec & { kind: 'ref' } => spec.kind === 'ref')
+    if (specs.length === 0 || conversation === undefined || readThumb === undefined) return
+    void (async () => {
+      const files: File[] = []
+      for (const spec of specs) {
+        try {
+          const result = await readThumb(spec.attachmentId) as unknown as { ok?: boolean; value?: { attachment?: { mediaType?: string }; data?: Uint8Array } }
+          if (result?.ok !== true || result.value?.data === undefined) continue
+          const mediaType = result.value.attachment?.mediaType ?? spec.mediaType
+          files.push(new File([result.value.data as BlobPart], `attachment-${spec.attachmentId}${mediaType.includes('jpeg') ? '.jpg' : '.png'}`, { type: mediaType }))
+        } catch {
+          // One failed attachment must not block the others.
+        }
+      }
+      if (files.length === 0) return
+      const drafts = conversation.createDraftImages(files)
+      const ids = drafts.map((draft) => draft.id).filter((id): id is string => id !== undefined)
+      if (ids.length > 0) {
+        try { inputActions.addImages?.(ids) } catch { /* draft-image registry may reject; text fill already landed */ }
+      }
+    })()
+  }, [conversation, inputActions, messages, nodeSnapshot, readThumb, sessionId])
+
+  // Bridge the DOM-injected buttons (module-level actionCtx) to this
+  // component's live closures + session id; refresh star states on every
+  // favorites change and on session switch.
+  useEffect(() => {
+    actionCtx.sessionId = sessionId
+    actionCtx.onToggleFavorite = (messageId) => {
+      if (sessionId !== undefined) toggleFavorite(sessionId, messageId)
+    }
+    actionCtx.onFill = fillToInput
+    refreshAllFavoriteButtons(t)
+    return () => {
+      // Only clear what this render set: a newer session may already own the ctx.
+      if (actionCtx.sessionId === sessionId) actionCtx.sessionId = undefined
+    }
+  }, [sessionId, fillToInput, t])
+
+  // Keep the injected DOM buttons in sync with external favorite toggles
+  // (rail star / another session's store write).
+  useEffect(() => {
+    refreshAllFavoriteButtons(t)
+  }, [favorites, t])
+
+  // Inject star + plus buttons into every user message row; observe DOM
+  // changes so history paging and re-renders keep them present.
+  useEffect(() => {
+    if (typeof document === 'undefined' || document.body === null) return
+    return startActionInjector(t)
+  }, [t])
+
   // Background full-history load: follow the runtime's authoritative hasMore
   // flag, but STOP as soon as the projection delivers.
   useEffect(() => {
@@ -699,10 +1032,10 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
 
   // Track the reading position (active item): nearest row to the 40% viewport line.
   useEffect(() => {
-    if (messages.length === 0) return
+    if (effectiveMessages.length === 0) return
     const indexByKey = new Map<string, number>()
-    for (let i = 0; i < messages.length; i++) {
-      const key = anchorKeyOf(messages[i])
+    for (let i = 0; i < effectiveMessages.length; i++) {
+      const key = anchorKeyOf(effectiveMessages[i])
       if (key !== undefined) indexByKey.set(key, i)
     }
     const updateActive = () => {
@@ -740,7 +1073,7 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
       if (scrollTimer !== null) clearTimeout(scrollTimer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, messages.length])
+  }, [sessionId, effectiveMessages.length])
 
   // Scroll the rail so the active item stays centered in its visible area:
   // follows the conversation's reading position (and re-centers after a
@@ -755,15 +1088,29 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
     el.scrollTo({ top: Math.max(0, target), behavior: 'smooth' })
   }, [activeIndex])
 
+  // The rail hides on tiny sessions (fewer than 2 user messages) — but the
+  // count is the UNFILTERED list: the favorites-only filter may legitimately
+  // narrow to a single row, and hiding the rail then would strand the user
+  // with no way to switch the filter back off.
   if (sessionId === undefined || messages.length < 2) return null
 
-  const items = messages.map((m, i) => {
+  // Fav-only filter remaps the tip index into the FULL list (tip content and
+  // hover data always come from the unfiltered messages array).
+  const tipIndex = tip === null
+    ? -1
+    : favOnly
+      ? messages.findIndex((m) => effectiveMessages[tip.index] !== undefined
+        && favoriteIdOfMessage(m) === favoriteIdOfMessage(effectiveMessages[tip.index]))
+      : tip.index
+
+  const items = effectiveMessages.map((m, i) => {
     const key = anchorKeyOf(m)
+    const starred = favoriteIdOfMessage(m) !== '' && isFavorite(favorites, sessionId, favoriteIdOfMessage(m))
     return createElement('button', {
       type: 'button',
       key: m.seq,
       'data-crl-index': String(i),
-      className: S.item + (activeIndex === i ? ` ${S.itemActive}` : ''),
+      className: S.item + (activeIndex === i ? ` ${S.itemActive}` : '') + (starred ? ` ${S.favItem}` : ''),
       'aria-label': `${t.roleUser}: ${m.text.slice(0, 60) || t.noText} (${t.ariaJump})`,
       'aria-current': activeIndex === i ? 'location' : undefined,
       disabled: jumping,
@@ -780,6 +1127,18 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
       onMouseLeave: () => handleItemLeave(i),
       children: [
         createElement('span', { className: S.num }, `#${i + 1}`),
+        starred
+          ? createElement('span', { className: S.favStar, role: 'img', 'aria-label': t.fav, 'aria-hidden': undefined },
+            createElement('svg', {
+              viewBox: '0 0 24 24',
+              width: 13,
+              height: 13,
+              fill: 'currentColor',
+              stroke: 'none',
+              'aria-hidden': true,
+            },
+            createElement('path', { d: STAR_PATH, 'aria-hidden': true })))
+          : null,
         createElement('span', { className: S.title }, m.text === '' ? t.noText : m.text),
         m.hasImage
           ? createElement('span', { className: S.img, role: 'img', 'aria-label': t.hasImage },
@@ -817,6 +1176,28 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
       onMouseEnter: () => setShow(true),
       onMouseLeave: () => setShow(false),
       children: [
+        // Favorites-only filter: a star pill above the rows. On state fills
+        // the star (yellow) and narrows the rail to favorited messages.
+        createElement('button', {
+          type: 'button',
+          key: 'favToggle',
+          className: S.favToggle + (favOnly ? ' crl_on' : ''),
+          'aria-pressed': favOnly,
+          'aria-label': t.favOnly,
+          title: t.favOnly,
+          onMouseEnter: (e: MouseEvent) => e.stopPropagation(),
+          onClick: () => setFavOnly((v) => !v),
+          children: createElement('svg', {
+            viewBox: '0 0 24 24',
+            width: 14,
+            height: 14,
+            fill: favOnly ? 'currentColor' : 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinejoin: 'round',
+            'aria-hidden': true,
+          }, createElement('path', { d: STAR_PATH })),
+        }),
         jumping ? createElement('div', { className: S.loading, key: 'loading' },
           createElement('span', { className: S.loadingLabel }, t.loading)) : null,
         ...items,
@@ -825,12 +1206,12 @@ function TimelineRail({ useProjection, sessionId, sessionsService }: TimelineRai
     // Full-content panel: anchored to the left of the hovered item. Images
     // stack above the text; a message whose image cannot be resolved (no
     // projection refs and unloaded node) shows a quiet "has image" badge.
-    tip !== null && tip.index >= 0 && tip.index < messages.length
+    tip !== null && tipIndex >= 0 && tipIndex < messages.length
       ? createElement('div', {
           className: S.tip,
           style: { left: `${tip.x}px`, top: `${tip.y}px`, transform: 'translateX(-100%)' },
         }, (() => {
-          const m = messages[tip.index]
+          const m = messages[tipIndex]
           const specs = tipImagesOf(m, nodeSnapshot)
           const children: ReactNode[] = []
           if (specs.length > 0 && readThumb !== undefined) {
@@ -859,7 +1240,13 @@ function apply(ctx: ClientContext): void {
     name: 'conversation.input.dock',
     id: 'chat-rail',
     order: 40,
-    inject: () => ({ sessionsService: ctx.sessions }),
+    inject: () => ({
+      sessionsService: ctx.sessions,
+      // createDraftImages lives on the concrete ConversationController, not
+      // the outward IConversation face; the runtime service is always the
+      // controller, so the cast is structural, never a feature guess.
+      conversation: ctx.conversation as unknown as { createDraftImages(files: readonly File[]): readonly { id: string }[] },
+    }),
   }, TimelineRail))
 }
 
