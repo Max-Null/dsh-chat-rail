@@ -10,9 +10,9 @@ This plugin belongs to the **`@max-null/*` family** — a set of plugins that to
 
 ## 截图
 
-| 展开态（画卷 + 消息预览 tip） | 收起态（与 better-sidebar 共存） |
+| 画卷展开（收藏过滤 + 收藏导航条） | 消息操作按钮（收藏 ★ / 填充 ➕ / 复制） |
 |---|---|
-| ![rail-1](docs/shots/rail-1.png) | ![rail-2](docs/shots/rail-2.png) |
+| ![rail-fav-1](docs/shots/rail-fav-1.png) | ![rail-fav-2](docs/shots/rail-fav-2.png) |
 
 ## 为什么比市面上的导航栏优秀
 
@@ -27,6 +27,7 @@ This plugin belongs to the **`@max-null/*` family** — a set of plugins that to
 | **消息预览** | 浏览器原生 title（与悬停双重提示） | ✅ **自绘 tip 面板**：完整内容、动画结束后精准定位、无原生 title 干扰 |
 | **消息信息** | 只有预览文本 | ✅ **编号 + 相对时间 + 文本三列对齐**：编号固定宽、时间靠右，文本区域最大化且整齐 |
 | **长会话跳转** | 干等卡死 | ✅ **加载反馈**：跳转远距离消息时显示 spinner + "加载中"，收起态只留图标 |
+| **消息收藏** | ❌ 大多数只能看不能存 | ✅ **收藏 + 快速填充**：消息行星标收藏（黄色导航条联动）、只显示收藏过滤、加号一键全文+附件回填输入框 |
 | **主题适配** | 部分 | ✅ 全部使用 DSH 主题变量（`--dsw-alias-*`），浅深色无缝适配 |
 | **无侧边栏兜底** | ❌ 依赖特定插件 | ✅ 纯 DSH 环境开箱即用，固定右缘 + 垂直居中 |
 
