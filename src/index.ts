@@ -1,6 +1,5 @@
 /**
  * @max-null/dsh-chat-rail — host half.
- *
  * Registers the `chatRail` session projection unit: a complete, durable
  * enumeration of the session's USER-sent messages (seq / time / preview /
  * durable message id). The client rail only needs user turns; assistant
@@ -12,6 +11,10 @@
  *
  * Architecture reference: dsh-chat-timeline (MIT) — same projection shape.
  */
+
+import { homedir } from 'node:os'
+import { join, dirname } from 'node:path'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 
 export const name = 'chat-rail'
 const PROJECTION_KEY = 'chatRail'
@@ -141,10 +144,72 @@ const Config = {
   },
 }
 
-function apply(ctx: { inject: (deps: string[], fn: (c: { sessionProjections: { register: (d: unknown) => void } }) => void) => void }): void {
-  ctx.inject(['sessionProjections'], (projectionCtx) => {
+// ── 收藏 host 侧持久化（2026-08-27）：localStorage 按 origin 隔离，思灵 DSH web
+// 端口每次启动随机 → 收藏跨重启丢失。改为 host 文件（profile 级，与端口无关）：
+//   GET  /chat-rail/api/favorites → { ok, value: Record<sessionId, messageId[]> }
+//   PUT  /chat-rail/api/favorites（body: { favorites: map }）→ 原子写
+const FAVORITES_PATH = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'chat-rail-favorites.json')
+const FAVORITES_ROUTE_PREFIX = '/chat-rail/api/favorites'
+type FavoritesMap = Record<string, string[]>
+
+function readFavoritesFile(): FavoritesMap {
+  try {
+    const parsed = JSON.parse(readFileSync(FAVORITES_PATH, 'utf8')) as unknown
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as FavoritesMap : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeFavoritesFile(map: FavoritesMap): void {
+  try {
+    mkdirSync(dirname(FAVORITES_PATH), { recursive: true })
+    writeFileSync(FAVORITES_PATH, JSON.stringify(map), 'utf8')
+  } catch { /* 尽力而为（非致命） */ }
+}
+
+function sendJson(res: { writeHead: (n: number, h: Record<string, string>) => void, end: (s: string) => void }, status: number, body: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
+  res.end(JSON.stringify(body))
+}
+
+const favoritesRouteDefinition = {
+  kind: 'exact',
+  path: FAVORITES_ROUTE_PREFIX,
+  handler: async (req: { method?: string, on: (e: string, cb: (c: string) => void) => void }, res: { writeHead: (n: number, h: Record<string, string>) => void, end: (s: string) => void }) => {
+    if (req.method === 'GET') {
+      sendJson(res, 200, { ok: true, value: readFavoritesFile() })
+      return
+    }
+    if (req.method === 'PUT') {
+      let raw = ''
+      req.on('data', (chunk: string) => { raw += chunk })
+      await new Promise<void>((resolve) => req.on('end', () => resolve()))
+      try {
+        const body = JSON.parse(raw) as { favorites?: unknown } | null
+        const map = body?.favorites
+        if (map === null || typeof map !== 'object' || Array.isArray(map)) {
+          sendJson(res, 400, { ok: false, error: 'bad-request' })
+          return
+        }
+        writeFavoritesFile(map as FavoritesMap)
+        sendJson(res, 200, { ok: true })
+      } catch {
+        sendJson(res, 400, { ok: false, error: 'bad-request' })
+      }
+      return
+    }
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+  },
+}
+
+function apply(ctx: { inject: (deps: string[], fn: (c: never) => void) => void }): void {
+  ctx.inject(['sessionProjections'] as never, ((projectionCtx: { sessionProjections: { register: (d: unknown) => void } }) => {
     projectionCtx.sessionProjections.register(messageIndexProjectionDefinition)
-  })
+  }) as never)
+  ctx.inject(['webServer'] as never, ((wsCtx: { webServer: { register: (d: unknown) => void } }) => {
+    wsCtx.webServer.register(favoritesRouteDefinition)
+  }) as never)
 }
 
 export { apply, Config }

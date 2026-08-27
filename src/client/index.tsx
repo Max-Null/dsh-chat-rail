@@ -245,14 +245,20 @@ const NOOP_STORE = { getSnapshot: () => undefined, subscribe: () => () => {} }
 // Shape: Record<sessionId, messageId[]>. The durable message id is the same
 // identity the host projection emits (`id`) and the DOM anchor encodes
 // (`13:input-message<id>`), so DOM-injected buttons and the rail agree on
-// the key with no projection hop. localStorage keeps it across reloads;
-// the module-level snapshot cache + listener set drive useSyncExternalStore
-// (rail) and the injected DOM buttons (refresh on toggle).
+// the key with no projection hop.
+// 持久化（2026-08-27）：host 文件（~/.dsh/chat-rail-favorites.json，经
+// /chat-rail/api/favorites GET/PUT）——localStorage 按 origin 隔离，思灵 DSH
+// web 端口每次启动随机 → 跨重启丢弃。localStorage 仅作旧数据一次性迁移。
 const FAVORITES_KEY = '@max-null/dsh-chat-rail:favorites'
 type FavoritesMap = Record<string, string[]>
 
-/** Read the persisted favorites map (defensive: malformed JSON → {}). */
-export function readFavorites(): FavoritesMap {
+const FAVORITES_API = '/chat-rail/api/favorites'
+/** 模块级快照缓存（host 加载后充当源 truth）+ 订阅者集合。 */
+let favoritesCache: FavoritesMap | null = null
+const favoritesListeners = new Set<() => void>()
+
+/** 从 localStorage 读旧数据（迁移用/离线兜底）。 */
+function readFavoritesLocal(): FavoritesMap {
   if (typeof localStorage === 'undefined') return {}
   try {
     const raw = localStorage.getItem(FAVORITES_KEY)
@@ -264,14 +270,52 @@ export function readFavorites(): FavoritesMap {
   }
 }
 
-/** Write the favorites map; storage failures are non-fatal (session-only mode). */
-function writeFavorites(map: FavoritesMap): void {
-  if (typeof localStorage === 'undefined') return
+async function fetchFavoritesMap(): Promise<FavoritesMap> {
   try {
-    localStorage.setItem(FAVORITES_KEY, JSON.stringify(map))
+    const res = await fetch(FAVORITES_API, { headers: { Accept: 'application/json' } })
+    if (!res.ok) return {}
+    const data = await res.json() as { ok?: boolean, value?: unknown }
+    const value = data?.value
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as FavoritesMap : {}
   } catch {
-    // Quota / private mode: the in-memory snapshot keeps working for this page.
+    return {}
   }
+}
+
+/** 模块加载时同步 host；旧 localStorage 数据迁移一次（host 为空且本地有值）。 */
+void (async () => {
+  const host = await fetchFavoritesMap()
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    const legacy = readFavoritesLocal()
+    if (Object.keys(host).length === 0 && Object.keys(legacy).length > 0) {
+      await fetch(FAVORITES_API, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ favorites: legacy }),
+      }).catch(() => {})
+    }
+    try { localStorage.removeItem(FAVORITES_KEY) } catch { /* 忽略 */ }
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    favoritesCache = Object.keys(host).length === 0 ? legacy : host
+    // host 就位后通知快照订阅（rail/收藏按钮重渲染）
+    for (const listener of favoritesListeners) listener()
+  } else {
+    favoritesCache = host
+  }
+})()
+
+/** Read the favorites map（内存镜像；未加载完成时回退 localStorage）。 */
+export function readFavorites(): FavoritesMap {
+  if (favoritesCache !== null) return favoritesCache
+  return readFavoritesLocal()
+}
+
+/** Write the favorites map；更新内存并 fire-and-forget 持久化到 host（host-only）。 */
+function writeFavorites(map: FavoritesMap): void {
+  favoritesCache = map
+  void fetch(FAVORITES_API, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ favorites: map }),
+  }).catch(() => { /* 网络失败：内存仍在用（下次写会重试） */ })
 }
 
 /** Normalized id list for one session (drops non-string entries). */
@@ -289,9 +333,6 @@ export function toggleFavoriteId(list: string[], id: string): string[] {
 export function isFavorite(map: FavoritesMap, sessionId: string, messageId: string): boolean {
   return favoriteIdsOf(map, sessionId).includes(messageId)
 }
-
-let favoritesCache: FavoritesMap | null = null
-const favoritesListeners = new Set<() => void>()
 
 /** Stable snapshot for useSyncExternalStore (loaded once, cached until toggle). */
 function favoritesSnapshot(): FavoritesMap {
