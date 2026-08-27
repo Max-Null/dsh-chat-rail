@@ -189,14 +189,14 @@ const css = [
   // same warm tone.
   '.crl_item.crl_favItem.crl_active .crl_line{background-color:#ffd166;box-shadow:0 0 6px #ffd166}',
   // Rail-top favorites-only toggle: a round icon pill in the collapsed state;
-  // on expand it becomes a full label row (star + "bookmarks only") so the
-  // control reads as a real rail header action instead of a stray dot.
+  // on expand it becomes a full-width label row (star + "bookmarks only") so
+  // the control reads as a real rail header action instead of a stray dot.
   '.crl_favToggle{flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:26px;margin:0 0 6px;padding:0;border:none;border-radius:13px;background:transparent;color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
   '.crl_favToggle:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.75)}',
   '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
-  '.crl_show .crl_favToggle{width:auto;height:26px;margin:0 6px 8px;padding:0 10px;border-radius:13px;align-self:flex-start}',
+  '.crl_show .crl_favToggle{width:auto;height:26px;margin:0 6px 8px;padding:0 11px;border-radius:13px;align-self:flex-start;text-align:left}',
   '.crl_favToggleLabel{display:none}',
-  '.crl_show .crl_favToggleLabel{display:inline}',
+  '.crl_show .crl_favToggleLabel{display:inline-block;min-width:0;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}',
   'body[data-ds-dark-theme] .crl_favToggle,[data-theme=\'dark\'] .crl_favToggle,.dark .crl_favToggle{color:rgba(255,255,255,.4)}',
   'body[data-ds-dark-theme] .crl_favToggle:hover,[data-theme=\'dark\'] .crl_favToggle:hover,.dark .crl_favToggle:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.85)}',
   'body[data-ds-dark-theme] .crl_favToggle.crl_on,[data-theme=\'dark\'] .crl_favToggle.crl_on,.dark .crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.18)}',
