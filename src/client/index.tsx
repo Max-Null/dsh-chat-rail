@@ -161,15 +161,17 @@ const css = [
   '.crl_tipBadge{display:inline-block;margin-bottom:8px;padding:0 7px;font-size:10px;line-height:16px;border-radius:9px;background:var(--dsw-alias-surface-sunken,var(--bg-muted,rgba(0,0,0,.06)));color:var(--dsw-alias-label-secondary,var(--text-muted,rgba(0,0,0,.45)))}',
   '@keyframes crl-pulse{0%,100%{opacity:.45}50%{opacity:.85}}',
   // Message action buttons injected next to the copy button (DOM row: the
-  // user-message IconActions row). Sized like the host's own 16px icon
-  // actions; the star lights yellowish (#ffd166, milestone-compatible) once
-  // the message is favorited.
-  '.crl_msgAct{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin:0;padding:0;border:none;border-radius:4px;background:transparent;color:rgba(0,0,0,.45);cursor:pointer;transition:background .15s ease,color .15s ease}',
-  '.crl_msgAct:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.8)}',
-  'body[data-ds-dark-theme] .crl_msgAct,[data-theme=\'dark\'] .crl_msgAct,.dark .crl_msgAct{color:rgba(255,255,255,.5)}',
-  'body[data-ds-dark-theme] .crl_msgAct:hover,[data-theme=\'dark\'] .crl_msgAct:hover,.dark .crl_msgAct:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.95)}',
+  // user-message IconActions row). The host rows use 28px round icon-action
+  // buttons (padding 6, 16px glyphs, DSW token colors, hover fill) — the
+  // injected buttons mirror the exact geometry and token surface so the star
+  // and plus read as native siblings of copy/branch. The star lights
+  // yellowish (#ffd166, milestone-compatible) once favorited.
+  '.crl_msgAct{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:0;padding:6px;border:none;border-radius:28px;background:transparent;color:var(--dsw-alias-label-tertiary,rgba(0,0,0,.42));cursor:pointer;transition:background .15s ease,color .15s ease}',
+  '.crl_msgAct:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-secondary,rgba(0,0,0,.72))}',
+  '.crl_msgAct:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:2px}',
   '.crl_msgAct.crl_fav.crl_on{color:#ffd166}',
   '.crl_msgAct.crl_fav.crl_on svg{fill:currentColor}',
+  '.crl_msgAct.crl_fav.crl_on:hover{color:#ffd166}',
   // Rail row favorite badge + yellow indicator line for favorited messages.
   '.crl_favStar{display:none;flex-shrink:0;align-items:center;justify-content:center;width:14px;height:14px;margin-right:6px;color:#ffd166}',
   '.crl_show .crl_favStar{display:inline-flex;animation:crl-fade .18s ease}',
@@ -356,7 +358,7 @@ function favoriteButtonOf(messageId: string, lang: Record<string, string>): HTML
   button.setAttribute('aria-pressed', String(isFavorite(favoritesSnapshot(), actionCtx.sessionId ?? '', messageId)))
   button.title = isFavorite(favoritesSnapshot(), actionCtx.sessionId ?? '', messageId) ? lang.unfav : lang.fav
   button.setAttribute('aria-label', button.title)
-  button.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`
+  button.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`
   button.addEventListener('click', (event) => {
     event.preventDefault()
     event.stopPropagation()
@@ -379,7 +381,7 @@ function fillButtonOf(messageId: string, lang: Record<string, string>): HTMLButt
   button.dataset.crlFill = messageId
   button.title = lang.fill
   button.setAttribute('aria-label', lang.fill)
-  button.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>'
+  button.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>'
   button.addEventListener('click', (event) => {
     event.preventDefault()
     event.stopPropagation()
