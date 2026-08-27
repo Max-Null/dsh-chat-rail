@@ -22,8 +22,17 @@ interface ProjectionDef {
 function loadProjection(): ProjectionDef {
   let def: ProjectionDef | undefined
   apply({
-    inject: (_deps: string[], fn: (c: { sessionProjections: { register: (d: ProjectionDef) => void } }) => void) => {
-      fn({ sessionProjections: { register: (d) => { def = d } } })
+    inject: (deps: string[], fn: (c: { sessionProjections: { register: (d: ProjectionDef) => void } }) => void) => {
+      // The host half registers BOTH the projection and the favorites HTTP
+      // route (2026-08-27 host persistence). The route needs `webServer`; the
+      // projection tests only care about the projection, so serve each
+      // dependency with the slice it asks for and record subscriptions.
+      if (deps.includes('sessionProjections')) {
+        fn({ sessionProjections: { register: (d) => { def = d } } })
+      } else if (deps.includes('webServer')) {
+        // Stub web server route subscription (no-op: tests don't exercise HTTP).
+        fn({ webServer: { register: () => {} } } as never)
+      }
     },
   })
   if (!def) throw new Error('projection was not registered')

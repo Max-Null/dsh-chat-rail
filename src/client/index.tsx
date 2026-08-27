@@ -191,7 +191,11 @@ const css = [
   // Rail-top favorites-only toggle: a round icon pill in the collapsed state;
   // on expand it becomes a full-width label row (star + "bookmarks only") so
   // the control reads as a real rail header action instead of a stray dot.
-  '.crl_favToggle{flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:26px;margin:0 0 6px;padding:0;border:none;border-radius:13px;background:transparent;color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
+  // STICKY: the expanded rail's rows scroll inside the capsule (overflow-y),
+  // and the pill must stay pinned at the top instead of scrolling away with
+  // them — sticky + an opaque inherited background keeps the labels reading
+  // cleanly over passing rows.
+  '.crl_favToggle{position:sticky;top:0;z-index:3;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:26px;margin:0 0 6px;padding:0;border:none;border-radius:13px;background:inherit;color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
   '.crl_favToggle:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.75)}',
   '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
   '.crl_show .crl_favToggle{width:auto;height:26px;margin:0 6px 8px;padding:0 11px;border-radius:13px;align-self:flex-start;text-align:left}',
@@ -897,9 +901,24 @@ function TimelineRail({ useProjection, sessionId, sessionsService, inputActions,
   // bookmarksOnly toggle; the DOM-injected buttons share the same store).
   const favorites = useSyncExternalStore(subscribeFavorites, favoritesSnapshot)
   const [favOnly, setFavOnly] = useState(false)
+  // Count of favorited messages in THIS session. The filter toggle is only
+  // worth showing when a favorite exists — with zero favorites there is
+  // nothing to filter to, so the pill disappears entirely.
+  const favCount = sessionId === undefined
+    ? 0
+    : messages.filter((m) => isFavorite(favorites, sessionId, favoriteIdOfMessage(m))).length
+  const showFavToggle = favCount > 0
   const effectiveMessages = favOnly
     ? messages.filter((m) => sessionId !== undefined && isFavorite(favorites, sessionId, favoriteIdOfMessage(m)))
     : messages
+
+  // If the filter is armed and the last favorite is un-starred (or the
+  // session switched), the filtered list would be empty AND the toggle would
+  // vanish — leaving a rail with nothing to un-filter. Auto-release the
+  // filter instead so the full list returns.
+  useEffect(() => {
+    if (favOnly && !showFavToggle) setFavOnly(false)
+  }, [favOnly, showFavToggle])
 
   const [activeIndex, setActiveIndex] = useState(-1)
   const [show, setShow] = useState(false)
@@ -1243,33 +1262,37 @@ function TimelineRail({ useProjection, sessionId, sessionsService, inputActions,
       onMouseEnter: () => setShow(true),
       onMouseLeave: () => setShow(false),
       children: [
-        // Favorites-only filter: a star pill above the rows. On state fills
-        // the star (yellow) and narrows the rail to favorited messages; the
-        // label ("bookmarks only") only shows once the rail expands — the
-        // collapsed 36px capsule keeps a clean round icon.
-        createElement('button', {
-          type: 'button',
-          key: 'favToggle',
-          className: S.favToggle + (favOnly ? ' crl_on' : ''),
-          'aria-pressed': favOnly,
-          'aria-label': t.favOnly,
-          title: t.favOnly,
-          onMouseEnter: (e: MouseEvent) => e.stopPropagation(),
-          onClick: () => setFavOnly((v) => !v),
-          children: [
-            createElement('svg', {
-              viewBox: '0 0 24 24',
-              width: 14,
-              height: 14,
-              fill: favOnly ? 'currentColor' : 'none',
-              stroke: 'currentColor',
-              strokeWidth: 2,
-              strokeLinejoin: 'round',
-              'aria-hidden': true,
-            }, createElement('path', { d: STAR_PATH })),
-            createElement('span', { className: S.favToggleLabel }, t.favOnly),
-          ],
-        }),
+        // Favorites-only filter: a star pill pinned at the top of the rail
+        // (sticky; it never scrolls away with the rows). On state fills the
+        // star (yellow) and narrows the rail to favorited messages; the label
+        // ("bookmarks only") only shows once the rail expands — the collapsed
+        // 36px capsule keeps a clean round icon. Hidden entirely when this
+        // session has no favorites (nothing to filter to).
+        showFavToggle
+          ? createElement('button', {
+              type: 'button',
+              key: 'favToggle',
+              className: S.favToggle + (favOnly ? ' crl_on' : ''),
+              'aria-pressed': favOnly,
+              'aria-label': t.favOnly,
+              title: t.favOnly,
+              onMouseEnter: (e: MouseEvent) => e.stopPropagation(),
+              onClick: () => setFavOnly((v) => !v),
+              children: [
+                createElement('svg', {
+                  viewBox: '0 0 24 24',
+                  width: 14,
+                  height: 14,
+                  fill: favOnly ? 'currentColor' : 'none',
+                  stroke: 'currentColor',
+                  strokeWidth: 2,
+                  strokeLinejoin: 'round',
+                  'aria-hidden': true,
+                }, createElement('path', { d: STAR_PATH })),
+                createElement('span', { className: S.favToggleLabel }, t.favOnly),
+              ],
+            })
+          : null,
         jumping ? createElement('div', { className: S.loading, key: 'loading' },
           createElement('span', { className: S.loadingLabel }, t.loading)) : null,
         ...items,

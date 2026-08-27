@@ -1,6 +1,6 @@
 /**
  * SSiD chat-rail favorites E2E (playwright-core, headless chromium).
- * After PIN: click a session row, wait for the rail, exercise favorite/fill/filter.
+ * Idempotent: resets host favorites at start, reloads, then drives the UI.
  */
 import { chromium } from 'playwright-core'
 
@@ -18,6 +18,18 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
 const consoleErrors = []
 page.on('pageerror', (err) => consoleErrors.push(`pageerror: ${String(err).slice(0, 160)}`))
 
+const openSession = async () => {
+  await page.evaluate(() => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode()
+    while (node !== null) {
+      if ((node.textContent ?? '').includes('确认open-sea-skin优化提R')) { node.parentElement?.click(); break }
+      node = walker.nextNode()
+    }
+  })
+  await page.waitForTimeout(10000)
+}
+
 try {
   await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 30000 })
   await page.waitForTimeout(1500)
@@ -28,48 +40,62 @@ try {
   }
   ok('app-shell', 'root loaded after PIN')
 
-  const clickedLabel = await page.evaluate(() => {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-    let node = walker.nextNode()
-    while (node !== null) {
-      if ((node.textContent ?? '').includes('确认open-sea-skin优化提R')) {
-        node.parentElement?.click()
-        return '确认open-sea-skin优化提R'
-      }
-      node = walker.nextNode()
-    }
-    return null
+  // ---- Idempotency reset: clear host favorites BEFORE any assertion ----
+  // (host persistence means stale stars from earlier runs would poison the
+  // "toggle hidden with no favorites" and "star-toggle flips" checks.)
+  await page.evaluate(async () => {
+    await fetch('/chat-rail/api/favorites', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ favorites: {} }),
+    })
   })
-  ok('session-open', clickedLabel === null ? 'no row found' : 'clicked "' + clickedLabel + '"')
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForTimeout(2000)
+  const gate2 = await page.evaluate(() => document.body.innerText.includes('访问密码'))
+  if (gate2) { const input = await page.$('input'); if (input) { await input.fill(PIN); await page.keyboard.press('Enter'); await page.waitForTimeout(4000) } }
 
-  await page.waitForTimeout(12000)
+  await openSession()
+
+  // Accept late plugin-update dialogs away (they overlay the rail area).
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const has = await page.evaluate(() => document.body.innerText.includes('插件更新'))
+    if (!has) break
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(600)
+  }
+  await page.waitForTimeout(3000)
 
   const styleMarker = await page.evaluate(() => document.querySelector('style[data-plugin-css*="dsh-chat-rail"]') !== null)
   const navPresent = await page.evaluate(() => document.querySelector('.crl_nav') !== null)
-  const favTogglePresent = await page.evaluate(() => document.querySelector('.crl_favToggle') !== null)
   const starCount = await page.evaluate(() => document.querySelectorAll('[data-crl-star]').length)
   const fillCount = await page.evaluate(() => document.querySelectorAll('[data-crl-fill]').length)
   ok('style-marker', 'present=' + styleMarker)
   ok('rail-nav', 'present=' + navPresent)
-  ok('fav-toggle', 'present=' + favTogglePresent)
   ok('message-actions', 'stars=' + starCount + ' fills=' + fillCount)
 
   if (navPresent && starCount > 0) {
+    // Toggle hidden with zero favorites.
+    const toggleBefore = await page.evaluate(() => document.querySelector('.crl_favToggle') !== null)
+    ok('fav-toggle-hidden-when-empty', 'present=' + toggleBefore + ' (expect false)')
+
+    // Star the first message → toggle appears, star yellow, rail yellow line.
     const before = await page.evaluate(() => document.querySelector('[data-crl-star]')?.getAttribute('aria-pressed'))
     await page.evaluate(() => document.querySelector('[data-crl-star]')?.click())
-    await page.waitForTimeout(500)
+    await page.waitForTimeout(800)
     const after = await page.evaluate(() => {
       const b = document.querySelector('[data-crl-star]')
-      const stored = localStorage.getItem('@max-null/dsh-chat-rail:favorites')
+      const pinned = document.querySelector('.crl_favToggle') !== null
       const starredRows = document.querySelectorAll('.crl_item.crl_favItem').length
       const yellow = document.querySelector('.crl_item.crl_favItem .crl_line') !== null
-      return { pressed: b?.getAttribute('aria-pressed'), stored, starredRows, yellow }
+      return { pressed: b?.getAttribute('aria-pressed'), pinned, starredRows, yellow }
     })
-    ok('star-toggle', 'before=' + before + ' after=' + after.pressed + ' persisted=' + (after.stored !== null))
+    ok('star-toggle', 'before=' + before + ' after=' + after.pressed)
+    ok('fav-toggle-shown-when-starred', 'present=' + after.pinned + ' (expect true)')
     ok('rail-yellow', 'rows=' + after.starredRows + ' yellowLine=' + after.yellow)
 
-    const hasToggle = await page.evaluate(() => document.querySelector('.crl_favToggle') !== null)
-    if (hasToggle) {
+    // Favorites-only filter.
+    if (after.pinned) {
       await page.evaluate(() => document.querySelector('.crl_favToggle')?.click())
       await page.waitForTimeout(400)
       const filtered = await page.evaluate(() => ({
@@ -81,6 +107,7 @@ try {
       await page.evaluate(() => document.querySelector('.crl_favToggle')?.click())
     }
 
+    // Fill-to-input (plus button).
     if (fillCount > 0) {
       const beforeDraft = await page.evaluate(() => document.querySelector('textarea')?.value ?? '')
       await page.evaluate(() => document.querySelector('[data-crl-fill]')?.click())
