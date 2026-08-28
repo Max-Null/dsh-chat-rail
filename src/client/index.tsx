@@ -193,9 +193,11 @@ const css = [
   // the control reads as a real rail header action instead of a stray dot.
   // STICKY: the expanded rail's rows scroll inside the capsule (overflow-y),
   // and the pill must stay pinned at the top instead of scrolling away with
-  // them — sticky + an opaque inherited background keeps the labels reading
-  // cleanly over passing rows.
-  '.crl_favToggle{position:sticky;top:0;z-index:3;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:26px;margin:0 0 6px;padding:0;border:none;border-radius:13px;background:inherit;color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
+  // them. The capsule has padding:10px 0 — sticky `top:0` would leave the
+  // last 10px of the scrollport uncovered, letting a passing row peek through
+  // above the pill. top:-10px shifts the pin edge to the capsule's true top
+  // (padding included), so rows scroll fully underneath.
+  '.crl_favToggle{position:sticky;top:-10px;z-index:3;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:26px;margin:0 0 6px;padding:0;border:none;border-radius:13px;background:inherit;color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
   '.crl_favToggle:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.75)}',
   '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
   '.crl_show .crl_favToggle{width:auto;height:26px;margin:0 6px 8px;padding:0 11px;border-radius:13px;align-self:flex-start;text-align:left}',
