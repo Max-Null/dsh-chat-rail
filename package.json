@@ -1,6 +1,6 @@
 {
   "name": "@max-null/dsh-chat-rail",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "画卷式消息导航栏：右侧竖条 hover 展开画卷，scroll-spy 高亮居中跟随，编号+时间+完整预览，与 better-sidebar 双面板动画同步避让",
   "type": "module",
   "main": "lib/index.mjs",
