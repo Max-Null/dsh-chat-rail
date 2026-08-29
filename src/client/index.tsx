@@ -207,6 +207,11 @@ const css = [
   'body[data-ds-dark-theme] .crl_favToggle:hover,[data-theme=\'dark\'] .crl_favToggle:hover,.dark .crl_favToggle:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.85)}',
   'body[data-ds-dark-theme] .crl_favToggle.crl_on,[data-theme=\'dark\'] .crl_favToggle.crl_on,.dark .crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.18)}',
   '@media (prefers-reduced-motion:reduce){.crl_nav,.crl_title,.crl_num,.crl_time,.crl_line{transition:none}.crl_tipImgPh{animation:none}}',
+  // 屏蔽官方 TurnNavigator（轮次导航竖轨，DSH 0.1.2-alpha.1+）：官方 rail 与本
+  // 插件 rail 同处会话面板右缘且只支持「轮次」维度，安装本插件后隐藏官方的，
+  // 由本插件统一承担消息导航。锚点用 aria-label（zh/en 双文案）而非 CSS module
+  // 类名（如 hkplfa_slot，hash 随构建内容漂移）。
+  'nav[aria-label="轮次导航"],nav[aria-label="Turn navigation"]{display:none !important}',
 ].join('')
 
 const STYLE_ID = '@max-null/dsh-chat-rail/styles.module.css'
