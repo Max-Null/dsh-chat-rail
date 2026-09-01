@@ -127,11 +127,11 @@ test('collectFromNodes returns empty for undefined or node-less snapshots', () =
 
 // ---- jumpToMessage ----
 
-/** Minimal Session stub: mutable window + hasMore + replaceable loadOlder. */
-function makeSessionStub(initial: { hasMore?: boolean }) {
+/** Minimal Session stub: mutable window + hasMore + replaceable loaders. */
+function makeSessionStub(initial: { hasMore?: boolean; loadingOlder?: boolean }) {
   let nodes = new Map<string, unknown>()
   let hasMore = initial.hasMore ?? false
-  let loadingOlder = false
+  let loadingOlder = initial.loadingOlder ?? false
   return {
     session: {
       getSnapshot: () => ({ hasMore, loadingOlder, chat: { nodes } }),
@@ -139,6 +139,7 @@ function makeSessionStub(initial: { hasMore?: boolean }) {
     },
     setNodes(next: Map<string, unknown>): void { nodes = next },
     setHasMore(v: boolean): void { hasMore = v },
+    setLoadingOlder(v: boolean): void { loadingOlder = v },
   }
 }
 
@@ -227,4 +228,81 @@ test('jumpToMessage: warns and gives up when hasMore exhausts without the target
   assert.equal(warnings.length, 1)
   assert.match(String(warnings[0]?.[0]), /not loaded after 0 page\(s\)/)
   assert.equal(loaded, 0)
+})
+
+test('jumpToMessage: loadThrough path pages with one exact call and no loadOlder loop', async () => {
+  const stub = makeSessionStub({ hasMore: true })
+  const key = '13:input-messagea1'
+  const throughCalls: number[] = []
+  let loadOlderCalls = 0
+  ;(stub.session as unknown as { loadThrough: (seq:number) => Promise<void> }).loadThrough = async (seq: number) => {
+    throughCalls.push(seq)
+    // The paged window lands the target node (chat view assembles after the pager settles).
+    stub.setNodes(new Map([[key, userNode(key, 55, 'target')]]))
+  }
+  stub.session.loadOlder = async () => { loadOlderCalls += 1 }
+  const result = await jumpToMessage(
+    { binding: () => ({ session: stub.session as never }) } as never,
+    's1',
+    key,
+    (k) => stub.session.getSnapshot().chat.nodes.get(k),
+    undefined,
+    undefined,
+    55,
+  )
+  assert.equal(result, false) // no DOM in node: the jump itself resolved
+  assert.deepEqual(throughCalls, [55])
+  assert.equal(loadOlderCalls, 0)
+})
+
+test('jumpToMessage: loadThrough waits for a plain loadOlder owner to release the busy flag', async () => {
+  const stub = makeSessionStub({ hasMore: true, loadingOlder: true })
+  const key = '13:input-messagea1'
+  const throughCalls: number[] = []
+  ;(stub.session as unknown as { loadThrough: (seq:number) => Promise<void> }).loadThrough = async (seq: number) => {
+    throughCalls.push(seq)
+    stub.setNodes(new Map([[key, userNode(key, 3, 'target')]]))
+  }
+  // The owner releases the busy flag shortly after the jump starts waiting.
+  setTimeout(() => stub.setLoadingOlder(false), 30)
+  const result = await jumpToMessage(
+    { binding: () => ({ session: stub.session as never }) } as never,
+    's1',
+    key,
+    (k) => stub.session.getSnapshot().chat.nodes.get(k),
+    undefined,
+    undefined,
+    3,
+  )
+  assert.equal(result, false)
+  assert.deepEqual(throughCalls, [3])
+})
+
+test('jumpToMessage: warns when loadThrough settles without the target node', async () => {
+  const stub = makeSessionStub({ hasMore: false })
+  const key = '13:input-messagemissing'
+  const throughCalls: number[] = []
+  ;(stub.session as unknown as { loadThrough: (seq:number) => Promise<void> }).loadThrough = async (seq: number) => {
+    throughCalls.push(seq)
+  }
+  const warnings: unknown[][] = []
+  const original = console.warn
+  console.warn = (...args: unknown[]) => { warnings.push(args) }
+  try {
+    const result = await jumpToMessage(
+      { binding: () => ({ session: stub.session as never }) } as never,
+      's1',
+      key,
+      () => undefined,
+      undefined,
+      undefined,
+      7,
+    )
+    assert.equal(result, false)
+  } finally {
+    console.warn = original
+  }
+  assert.deepEqual(throughCalls, [7])
+  assert.equal(warnings.length, 1)
+  assert.match(String(warnings[0]?.[0]), /not loaded after loadThrough\(7\)/)
 })

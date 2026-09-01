@@ -36,7 +36,8 @@ This plugin belongs to the **`@max-null/*` family** — a set of plugins that to
 - **与 dsh-better-sidebar 深度兼容**：导航栏的右缘和垂直位置跟随 better-sidebar 的 `--dsh-sidebar-width` / `--dsh-sidebar-height` CSS 变量，右栏和底栏展开/收起时导航与面板**共享同一段 transition 动画同步移动**，永不错位、永不遮挡（包括底栏右上角的收起按钮）。
 - **无 better-sidebar 也能用**：变量缺失时走 CSS fallback（右缘 12px + 垂直居中），纯 DSH 环境开箱即用。
 - **与 DSH 自带轮次导航协同**：DSH `0.1.2-alpha.1+` 自带 TurnNavigator（轮次导航竖轨）。安装本插件后自动隐藏官方竖轨（aria-label 双文案锚点，不依赖构建 hash），由本插件统一承担会话导航；未安装本插件时官方导航照常显示。
-- 需要 DSH ≥ `0.1.0-rc.6`。
+- **深历史跳转（DSH `0.1.2-alpha.3+` 内核）**：会话历史按窗口分页加载（`hasMore`）时，点击跳转走官方 `loadThrough(seq)` 精确跳转装载器（200 条/页一次到位），替代旧版逐页 `loadOlder`（50 条/页）循环；旧内核无 `loadThrough` 时自动回退逐页循环。
+- 需要 DSH ≥ `0.1.0-rc.6`；完整适配 DSH `0.1.2-alpha.4`。
 
 ## 安装
 
@@ -55,7 +56,7 @@ dsh plugin --profile <name> add @max-null/dsh-chat-rail
 
 - **hover 导航条**：画卷展开，显示编号 / 相对时间 / 消息预览
 - **hover 消息项**：左侧弹出完整内容 tip 面板（含图消息在文本上方显示图片缩略图）
-- **点击消息项**：跳转到会话中对应消息（未加载的历史自动翻页补载）
+- **点击消息项**：跳转到会话中对应消息（未加载的历史自动补载；DSH `0.1.2-alpha.3+` 走官方 `loadThrough` 精确跳转，旧内核回退逐页循环）
 - **滚动会话**：高亮点跟随，导航条自动滚动保持居中
 - **含图消息**：展开态显示柔和图片角标（收起态不显示，保持竖条干净）
 

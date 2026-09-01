@@ -791,20 +791,25 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 /**
  * Ensure the message node is loaded into the visible window, then scroll to it.
- * loadOlder pages 50 messages at a time (DSH PAGE_MESSAGES), so a jump far back
- * in a long session needs many pages. Report page count through onProgress so
- * the UI can show a loading state instead of appearing frozen.
  *
- * "Loaded" is decided through `nodeOf`, the live chat-node reader (the
- * uiConversation `'chat'` target on current DSH, where the Session snapshot no
- * longer carries chat.nodes); without it the legacy Session snapshot's
- * `chat.nodes` Map is used.
+ * DSH 0.1.2-alpha.3+ (session-controller) pages history through the exact
+ * `loadThrough(seq)` jump pager (documented as the turn-jump loader, 200
+ * messages per page): when the message's event `seq` is known the rail jumps
+ * with one precise `loadThrough` call and settles its completion, instead of
+ * paging `loadOlder` (50 messages per page, DSH PAGE_MESSAGES) from the window
+ * head — a far jump in a long session costs one call, not dozens.
  *
- * The paged-in data lands in the session snapshot synchronously with
- * loadOlder's resolution, but the chat rows render through React — the DOM row
- * for the target key appears a beat later. We therefore poll for the row (with
- * a timeout) instead of querying once and giving up; otherwise a multi-page
- * jump would "finish loading" without scrolling and need a second click.
+ * `loadThrough` returns immediately when another loader owns the busy flag
+ * (the official caller retries once it settles), so the rail waits for the
+ * owner to release before issuing the jump; after it resolves, the chat view
+ * assembles the paged window asynchronously, so the target node is polled
+ * before the row, and the row before the scroll.
+ *
+ * Fallback (older DSH without `loadThrough`, or a message without a dependable
+ * seq): the `loadOlder` loop below, with its page-count progress. "Loaded" is
+ * decided through `nodeOf` — the uiConversation `'chat'` target on current
+ * DSH, where the Session snapshot no longer carries chat.nodes — falling back
+ * to the legacy Session snapshot's `chat.nodes` Map without it.
  */
 async function jumpToMessage(
   sessionsService: { binding: (id: string) => { session?: { getSnapshot(): unknown; loadOlder(): Promise<unknown>; hasMore?: boolean; loadingOlder?: boolean } } | undefined },
@@ -814,6 +819,8 @@ async function jumpToMessage(
   nodeOf?: (key: string) => unknown,
   onProgress?: (pages: number) => void,
   signal?: AbortSignal,
+  /** Durable event seq of the target message (chatRail projection / node anchor seq). */
+  targetSeq?: number,
 ): Promise<boolean> {
   const session = sessionsService.binding(sessionId)?.session
   if (session === undefined) return false
@@ -821,31 +828,60 @@ async function jumpToMessage(
     ? (k: string) => (session.getSnapshot() as { chat?: { nodes?: Map<string, unknown> } }).chat?.nodes?.get(k) !== undefined
     : nodeOf
   let pages = 0
-  let guard = 0
   let loaded = false
-  while (guard++ < 120) {
-    if (signal?.aborted) return false
-    const snapshot = session.getSnapshot() as { hasMore?: boolean; loadingOlder?: boolean } | undefined
-    if (isLoaded(key)) {
-      loaded = true
-      break
-    }
-    if (snapshot?.hasMore !== true) break
-    if (snapshot.loadingOlder === true) {
-      // Another loader owns the current page; wait for it without busy-spinning.
+  const jumpLoadThrough = (session as { loadThrough?: ((seq: number) => Promise<unknown>) | undefined }).loadThrough
+  if (typeof jumpLoadThrough === 'function' && targetSeq !== undefined && Number.isSafeInteger(targetSeq)) {
+    // A plain pull owns the busy flag during its single page; loadThrough does
+    // not queue behind it, so wait for the owner instead of returning a false
+    // "done" on the first probe.
+    let spin = 0
+    while (spin++ < 120) {
+      if (signal?.aborted) return false
+      const snapshot = session.getSnapshot() as { loadingOlder?: boolean } | undefined
+      if (snapshot?.loadingOlder !== true) break
       await delay(50)
-      continue
     }
-    await session.loadOlder()
-    pages++
-    // Report progress only on page boundaries, not every loop iteration.
-    onProgress?.(pages)
-  }
-  // Page guard exhausted (or hasMore ran out) without the node materializing:
-  // fail fast with context instead of burning the DOM poll below.
-  if (!loaded) {
-    console.warn(`[chat-rail] jumpToMessage: node "${key}" not loaded after ${pages} page(s)`)
-    return false
+    if (signal?.aborted) return false
+    await jumpLoadThrough(targetSeq)
+    // The pager settles when the window covers targetSeq (or history is
+    // exhausted), but the chat view assembles the paged window asynchronously:
+    // poll the node before concluding, bounded the same way as the DOM poll.
+    let spinNode = 0
+    while (spinNode++ < 100) {
+      if (signal?.aborted) return false
+      if (isLoaded(key)) { loaded = true; break }
+      await delay(50)
+    }
+    if (!loaded) {
+      console.warn(`[chat-rail] jumpToMessage: node "${key}" not loaded after loadThrough(${String(targetSeq)})`)
+      return false
+    }
+  } else {
+    let guard = 0
+    while (guard++ < 120) {
+      if (signal?.aborted) return false
+      const snapshot = session.getSnapshot() as { hasMore?: boolean; loadingOlder?: boolean } | undefined
+      if (isLoaded(key)) {
+        loaded = true
+        break
+      }
+      if (snapshot?.hasMore !== true) break
+      if (snapshot.loadingOlder === true) {
+        // Another loader owns the current page; wait for it without busy-spinning.
+        await delay(50)
+        continue
+      }
+      await session.loadOlder()
+      pages++
+      // Report progress only on page boundaries, not every loop iteration.
+      onProgress?.(pages)
+    }
+    // Page guard exhausted (or hasMore ran out) without the node materializing:
+    // fail fast with context instead of burning the DOM poll below.
+    if (!loaded) {
+      console.warn(`[chat-rail] jumpToMessage: node "${key}" not loaded after ${pages} page(s)`)
+      return false
+    }
   }
   const scrollport = typeof document !== 'undefined' ? document.querySelector('[data-conversation-scroll]') : null
   if (scrollport === null) return false
@@ -1308,6 +1344,10 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
           (k) => chatNodeOf(fallbackStore.getSnapshot(), k),
           undefined,
           controller.signal,
+          // DSH 0.1.2-alpha.3+ jump pager: the message's event seq lets the
+          // rail page history with one exact loadThrough call instead of a
+          // loadOlder loop (50 messages per page) from the window head.
+          m.seq,
         ).finally(() => setJumping(false))
       },
       onMouseEnter: () => handleItemEnter(i),
