@@ -898,7 +898,46 @@ async function jumpToMessage(
   }
   if (row === null) return false
   const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  row.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' })
+  // DSH 0.1.2-alpha.3+ paging compensates the reader position while the newly
+  // prepended window re-flows — a scrollIntoView issued right after a multi-
+  // page loadThrough lands mid-flight and gets overridden by the compensation
+  // (verified on the alpha.4 kernel: 145971 → 44464 snap-back). Wait for the
+  // scrollport geometry to go quiet, land with an explicit scrollTo computed
+  // from the row's viewport rect, then re-verify a few times: a stray
+  // bottom-follow can still pull the flight back.
+  const scrollToRow = (): void => {
+    const viewRect = scrollport.getBoundingClientRect()
+    const rowRect = (row as Element).getBoundingClientRect()
+    const target = scrollport.scrollTop + (rowRect.top - viewRect.top) - (viewRect.height - rowRect.height) / 2
+    if (target < 0) return
+    scrollport.scrollTo({ top: target, behavior: reducedMotion ? 'auto' : 'smooth' })
+  }
+  const rowDelta = (): number => {
+    const viewRect = scrollport.getBoundingClientRect()
+    const rowRect = (row as Element).getBoundingClientRect()
+    return Math.abs((rowRect.top + rowRect.height / 2) - (viewRect.top + viewRect.height / 2))
+  }
+  let stableTop = -1
+  let stableHeight = -1
+  let stability = 0
+  let quiet = 0
+  while (quiet++ < 30) {
+    if (signal?.aborted) return false
+    const top = scrollport.scrollTop
+    const height = scrollport.scrollHeight
+    if (top === stableTop && height === stableHeight) stability++
+    else { stableTop = top; stableHeight = height; stability = 0 }
+    if (stability >= 3) break
+    await delay(150)
+  }
+  if (signal?.aborted) return false
+  scrollToRow()
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await delay(600)
+    if (signal?.aborted) return false
+    if (rowDelta() <= Math.max(120, scrollport.getBoundingClientRect().height * 0.2)) break
+    scrollToRow()
+  }
   return true
 }
 

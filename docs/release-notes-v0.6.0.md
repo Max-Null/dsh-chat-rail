@@ -23,7 +23,20 @@
 - 回退路径（旧内核无 `loadThrough`，或 seq 不可依赖）：原 `loadOlder` 逐页循环（50 条/页、≤120 页 guard、`onProgress` 页数回调）完整保留。
 - 调用点传入 `m.seq`，注释标明走官方 jump pager。
 
-### 2. 依赖对齐 DSH `0.1.2-alpha.4`
+### 2. 深历史跳转落位修复（alpha.3+ 分页补偿）
+
+- L2 实测发现（SSiD dev，DSH alpha.4 内核，43 条消息/1500+ 行会话）：`loadThrough` 分页成功后，
+  `scrollIntoView` 落位**被官方 prepend 补偿覆盖**——打开会话尾部窗口（130 行），点击第一条后窗口
+  扩张到 1525 行（scrollTop 轨迹 12758 → 145971 → 被覆盖回 44464），目标行悬在视口上方 5530px。
+- 根因：alpha.3+ 分页期间 chat 视图持续「补偿读者位置」（prepend 高度补偿 + settle），
+  `scrollIntoView` 在补偿飞行中执行即被覆盖。
+- 修复：落位改为三段防御——
+  1. **等几何静默**：scrollTop/scrollHeight 连续 3 次采样（150ms 间隔）不变；
+  2. **显式落位**：由行 rect 与视口 rect 差值计算目标 scrollTop（`scrollTo`，reduced-motion 尊重）；
+  3. **复查重落**：600ms × 4 次校验行中心落在视口偏移 20% 内，偏离则重落（兜底 bottom-follow 拉回）。
+- 实测：jump-first ratio 0.003（scrollTop 144/45288，精准到首条）；jump-last ratio 0.960；console 干净。
+
+### 3. 依赖对齐 DSH `0.1.2-alpha.4`
 
 - peer：`@deepseek-ai/dsh-session-projection` `^0.1.1-rc.1` → `^0.1.2-alpha.4`。
 - devDeps：`dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-slots` / `dsh-session-projection` 全部 `^0.1.2-alpha.4`；补 `@deepseek-ai/dsh-session@^0.1.2-alpha.4`（alpha.4 系列包的 pre-release peer 链在 pnpm 11 下需显式直装才能解析，否则 `PNPM_NO_MATCHING_VERSION`）。
