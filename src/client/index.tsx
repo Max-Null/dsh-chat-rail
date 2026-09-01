@@ -645,30 +645,104 @@ function userHasImage(content: unknown): boolean {
     && (block as { type?: unknown }).type === 'image')
 }
 
-/** Fallback collector: enumerate user messages from the loaded chat nodes. */
-function collectFromNodes(snapshot: unknown): RailMessage[] {
+// ---- Chat-node data plane (DSH 0.1.2-alpha.2+) ----
+// DSH 0.1.2-alpha.2 moved Conversation target data out of the Session
+// snapshot: `session.getSnapshot()` no longer carries `chat.nodes`, and the
+// per-Session Chat nodes live in the uiConversation `'chat'` view target
+// (ChatSnapshot with a keyed `nodes` store). The rail resolves nodes from
+// either plane — current DSH first, legacy Session snapshot as fallback.
+
+/** Observable snapshot surface of one Session's `'chat'` view target. */
+export interface ChatViewSource {
+  subscribe(listener: () => void): () => void
+  getSnapshot(): unknown
+}
+
+/** Keyed Chat node store published by the official ChatSnapshot (`nodes`). */
+interface ChatNodeStoreLike {
+  get(key: string): unknown
+  values(): Iterable<unknown> | readonly unknown[]
+}
+
+/** Structural shape of the uiConversation `'chat'` target snapshot. */
+interface ChatSnapshotLike {
+  readonly nodes: ChatNodeStoreLike
+}
+
+/** Minimal observable shape of a chat node (either data plane). */
+interface ChatNodeLike {
+  readonly key?: unknown
+  readonly kind?: unknown
+  readonly anchorSeq?: unknown
+  readonly data?: { time?: unknown; content?: unknown } | null
+}
+/** Runtime face of the official Conversation assembly service
+ *  (DSH 0.1.2-alpha.2+). Kept as a local structural type because the npm
+ *  client-runtime types (0.1.1-rc.1) predate the service rename and still
+ *  expose the legacy registry names. */
+interface UiConversationRuntime {
+  binding(sessionId: string): {
+    target(name: 'chat'): ChatViewSource | undefined
+  }
+}
+
+/**
+ * Resolve one chat node from either data plane: the official Chat view
+ * snapshot (`nodes` keyed store) on current DSH, or the legacy Session
+ * snapshot's `chat.nodes` Map on older DSH.
+ * @param snapshot - the active node snapshot.
+ * @param key - the Conversation Context key.
+ * @returns the raw node, when its window covers the key.
+ */
+export function chatNodeOf(snapshot: unknown, key: string | undefined): unknown {
+  if (key === undefined || snapshot === undefined || snapshot === null) return undefined
+  const store = (snapshot as ChatSnapshotLike | undefined)?.nodes as ChatNodeStoreLike | undefined
+  if (store !== undefined && typeof store.get === 'function') {
+    return store.get(key)
+  }
+  const map = (snapshot as { chat?: { nodes?: Map<string, unknown> } } | undefined)?.chat?.nodes
+  return map?.get(key)
+}
+
+/** Map one chat node (either plane) to a rail message entry. */
+export function railMessageOfNode(node: unknown): RailMessage | null {
+  if (node === null || typeof node !== 'object') return null
+  const n = node as ChatNodeLike
+  if (n.kind !== 'user' && n.kind !== 'steering') return null
+  const key = typeof n.key === 'string' ? n.key : undefined
+  if (key === undefined) return null
+  const data = n.data
+  if (data === null || typeof data !== 'object') return null
+  if (typeof data.time !== 'number' || !Array.isArray(data.content)) return null
+  const images = nodeImagesOf(data.content)
+  return {
+    seq: typeof n.anchorSeq === 'number' ? n.anchorSeq : 0,
+    time: data.time,
+    text: userTextOf(data.content),
+    hasImage: userHasImage(data.content),
+    ...(images.length > 0 ? { images } : {}),
+    key,
+  }
+}
+
+/** Fallback collector: enumerate user messages from the loaded chat nodes.
+ *  Accepts either data plane — the official Chat view snapshot (`nodes`
+ *  values) or the legacy Session snapshot's `chat.nodes` Map. */
+export function collectFromNodes(snapshot: unknown): RailMessage[] {
   const out: RailMessage[] = []
-  if (snapshot === undefined || (snapshot as { chat?: unknown }).chat === undefined) return out
-  const chat = (snapshot as { chat: { nodes?: Map<unknown, unknown> } }).chat
-  if (!chat.nodes) return out
-  for (const node of chat.nodes.values()) {
-    if (node === null || typeof node !== 'object') continue
-    const n = node as { kind?: unknown; key?: unknown; anchorSeq?: unknown; data?: unknown }
-    if (n.kind !== 'user') continue
-    const data = n.data as { time?: unknown; content?: unknown } | null
-    if (data === null || typeof data !== 'object') continue
-    if (typeof data.time !== 'number' || !Array.isArray(data.content)) continue
-    const key = typeof n.key === 'string' ? n.key : undefined
-    if (key === undefined) continue
-    const images = nodeImagesOf(data.content)
-    out.push({
-      seq: typeof n.anchorSeq === 'number' ? n.anchorSeq : 0,
-      time: data.time,
-      text: userTextOf(data.content),
-      hasImage: userHasImage(data.content),
-      ...(images.length > 0 ? { images } : {}),
-      key,
-    })
+  const store = (snapshot as ChatSnapshotLike | undefined)?.nodes as ChatNodeStoreLike | undefined
+  if (store !== undefined && typeof store.values === 'function') {
+    for (const node of store.values()) {
+      const m = railMessageOfNode(node)
+      if (m !== null) out.push(m)
+    }
+  } else {
+    const chat = (snapshot as { chat?: { nodes?: Map<unknown, unknown> } } | undefined)?.chat
+    if (chat?.nodes === undefined) return out
+    for (const node of chat.nodes.values()) {
+      const m = railMessageOfNode(node)
+      if (m !== null) out.push(m)
+    }
   }
   out.sort((a, b) => a.seq - b.seq)
   return out
@@ -685,8 +759,7 @@ function anchorKeyOf(m: RailMessage): string | undefined {
  *  falling back to the projection preview when the node is not mounted. */
 function fullTextOf(m: RailMessage, nodeSnapshot: unknown): string {
   const key = anchorKeyOf(m)
-  const nodes = (nodeSnapshot as { chat?: { nodes?: Map<string, { data?: { content?: unknown } }> } } | undefined)?.chat?.nodes
-  const node = key === undefined ? undefined : nodes?.get(key)
+  const node = chatNodeOf(nodeSnapshot, key) as { data?: { content?: unknown } } | undefined
   const content = node?.data?.content
   if (Array.isArray(content)) {
     let out = ''
@@ -710,8 +783,7 @@ function tipImagesOf(m: RailMessage, nodeSnapshot: unknown): ImageSpec[] {
     return m.images.map(img => ({ kind: 'ref', attachmentId: img.attachmentId, mediaType: img.mediaType }))
   }
   const key = anchorKeyOf(m)
-  const nodes = (nodeSnapshot as { chat?: { nodes?: Map<string, { data?: { content?: unknown } }> } } | undefined)?.chat?.nodes
-  const node = key === undefined ? undefined : nodes?.get(key)
+  const node = chatNodeOf(nodeSnapshot, key) as { data?: { content?: unknown } } | undefined
   return imageSpecsOfContent(node?.data?.content)
 }
 
@@ -723,6 +795,11 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * in a long session needs many pages. Report page count through onProgress so
  * the UI can show a loading state instead of appearing frozen.
  *
+ * "Loaded" is decided through `nodeOf`, the live chat-node reader (the
+ * uiConversation `'chat'` target on current DSH, where the Session snapshot no
+ * longer carries chat.nodes); without it the legacy Session snapshot's
+ * `chat.nodes` Map is used.
+ *
  * The paged-in data lands in the session snapshot synchronously with
  * loadOlder's resolution, but the chat rows render through React — the DOM row
  * for the target key appears a beat later. We therefore poll for the row (with
@@ -733,18 +810,23 @@ async function jumpToMessage(
   sessionsService: { binding: (id: string) => { session?: { getSnapshot(): unknown; loadOlder(): Promise<unknown>; hasMore?: boolean; loadingOlder?: boolean } } | undefined },
   sessionId: string,
   key: string,
+  /** Live chat-node reader: called with the current snapshot on every probe. */
+  nodeOf?: (key: string) => unknown,
   onProgress?: (pages: number) => void,
   signal?: AbortSignal,
 ): Promise<boolean> {
   const session = sessionsService.binding(sessionId)?.session
   if (session === undefined) return false
+  const isLoaded = nodeOf === undefined
+    ? (k: string) => (session.getSnapshot() as { chat?: { nodes?: Map<string, unknown> } }).chat?.nodes?.get(k) !== undefined
+    : nodeOf
   let pages = 0
   let guard = 0
   let loaded = false
   while (guard++ < 120) {
     if (signal?.aborted) return false
-    const snapshot = session.getSnapshot() as { chat?: { nodes?: Map<string, unknown> }; hasMore?: boolean; loadingOlder?: boolean } | undefined
-    if (snapshot?.chat?.nodes?.get(key) !== undefined) {
+    const snapshot = session.getSnapshot() as { hasMore?: boolean; loadingOlder?: boolean } | undefined
+    if (isLoaded(key)) {
       loaded = true
       break
     }
@@ -868,6 +950,8 @@ interface TimelineRailProps {
   useProjection: (key: string) => { messages?: unknown[] } | undefined
   sessionId?: SessionId
   sessionsService: ISessions
+  /** Live Chat view source for the session (current DSH `'chat'` target). */
+  chatOf?: (sessionId: string) => ChatViewSource | undefined
   /** Draft write + attachment-add face (session-scope framework injection). */
   inputActions?: {
     setDraft(text: string): void
@@ -885,11 +969,15 @@ function langStrings(): Record<string, string> {
   return STRINGS[lang.startsWith('zh') ? 'zh' : 'en']
 }
 
-function TimelineRail({ useProjection, sessionId, sessionsService, inputActions, conversation }: TimelineRailProps): ReactNode {
+function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, inputActions, conversation }: TimelineRailProps): ReactNode {
   const t = langStrings()
   const projected = useProjection('chatRail')
   const session = sessionId === undefined ? undefined : (sessionsService.binding(sessionId) as { session?: { subscribe(cb: () => void): () => void; getSnapshot(): unknown } } | undefined)?.session
-  const fallbackStore = session === undefined ? NOOP_STORE : session
+  // Chat-node source: the official `'chat'` view target on current DSH (the
+  // Session snapshot no longer carries chat.nodes); the Session snapshot stays
+  // as the legacy fallback on older DSH.
+  const chatSource = sessionId === undefined ? undefined : chatOf?.(sessionId)
+  const fallbackStore = chatSource ?? (session === undefined ? NOOP_STORE : session)
   const nodeSnapshot = useSyncExternalStore(
     (cb) => fallbackStore.subscribe(cb),
     () => fallbackStore.getSnapshot(),
@@ -1213,8 +1301,14 @@ function TimelineRail({ useProjection, sessionId, sessionsService, inputActions,
         const controller = new AbortController()
         jumpAbortRef.current = controller
         setJumping(true)
-        void jumpToMessage(sessionsService as never, sessionId as string, key, undefined, controller.signal)
-          .finally(() => setJumping(false))
+        void jumpToMessage(
+          sessionsService as never,
+          sessionId as string,
+          key,
+          (k) => chatNodeOf(fallbackStore.getSnapshot(), k),
+          undefined,
+          controller.signal,
+        ).finally(() => setJumping(false))
       },
       onMouseEnter: () => handleItemEnter(i),
       onMouseLeave: () => handleItemLeave(i),
@@ -1338,12 +1432,31 @@ function TimelineRail({ useProjection, sessionId, sessionsService, inputActions,
 }
 
 function apply(ctx: ClientContext): void {
+  // Current DSH (0.1.2-alpha.2+) moved Conversation target data out of the
+  // Session snapshot: chat nodes live in the uiConversation `'chat'` view
+  // target. Resolved through optional ctx.inject (own fiber, never blocking
+  // this plugin) so older DSH without the service keeps the legacy Session
+  // snapshot fallback untouched.
+  let chatOf: ((sessionId: string) => ChatViewSource | undefined) | undefined
+  ctx.inject(['uiConversation'], (scope: ClientContext) => {
+    const ui = (scope as unknown as { uiConversation: UiConversationRuntime }).uiConversation
+    chatOf = (sessionId: string): ChatViewSource | undefined => {
+      try {
+        const binding = ui.binding(sessionId)
+        return binding.target('chat') as unknown as ChatViewSource | undefined
+      } catch {
+        // Unknown session: the rail already gates on a live session id.
+        return undefined
+      }
+    }
+  })
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
     id: 'chat-rail',
     order: 40,
     inject: () => ({
       sessionsService: ctx.sessions,
+      chatOf,
       // createDraftImages lives on the concrete ConversationController, not
       // the outward IConversation face; the runtime service is always the
       // controller, so the cast is structural, never a feature guess.
@@ -1352,4 +1465,4 @@ function apply(ctx: ClientContext): void {
   }, TimelineRail))
 }
 
-export { apply, TimelineRail, imageSpecsOfContent, normalize }
+export { apply, TimelineRail, imageSpecsOfContent, normalize, jumpToMessage }
