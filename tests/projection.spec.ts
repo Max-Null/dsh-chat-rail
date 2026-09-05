@@ -153,5 +153,6 @@ test('view returns the accumulated state', () => {
 })
 
 test('config schema accepts an empty value', () => {
-  assert.deepEqual(Config['~standard'].validate(undefined), { value: {} })
+  // zod Config（2026-09-06）：空值按默认值解析（showOfficialNavigator=false）。
+  assert.deepEqual(Config['~standard'].validate(undefined), { value: { showOfficialNavigator: false } })
 })

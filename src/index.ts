@@ -15,9 +15,20 @@
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-settings'
+import z from '@deepseek-ai/schemastery'
 
 export const name = 'chat-rail'
 const PROJECTION_KEY = 'chatRail'
+
+/** 设置 namespace（与 client 的 settingsScope.bind 一致；设置——插件页卡片锚点）。 */
+export const CHAT_RAIL_NS = 'chat-rail'
+
+/** 可配置项：「使用官方轮次导航条」（对比模式，默认关=chat-rail 主导隐藏官方）。 */
+export const Config: z<{ showOfficialNavigator: boolean }> = z.object({
+  showOfficialNavigator: z.boolean().default(false),
+})
 
 /** Cap preview text so projection payloads stay small (80 chars ≈ 1-2 lines). */
 const MAX_TEXT_CHARS = 80
@@ -136,14 +147,6 @@ const messageIndexProjectionDefinition = {
   stateVersion: 6,
 }
 
-const Config = {
-  '~standard': {
-    version: 1,
-    vendor: 'chat-rail',
-    validate: (value: unknown) => ({ value: value ?? {} }),
-  },
-}
-
 // ── 收藏 host 侧持久化（2026-08-27）：localStorage 按 origin 隔离，思灵 DSH web
 // 端口每次启动随机 → 收藏跨重启丢失。改为 host 文件（profile 级，与端口无关）：
 //   GET  /chat-rail/api/favorites → { ok, value: Record<sessionId, messageId[]> }
@@ -203,13 +206,21 @@ const favoritesRouteDefinition = {
   },
 }
 
-function apply(ctx: { inject: (deps: string[], fn: (c: never) => void) => void }): void {
+function apply(ctx: Context, config: { showOfficialNavigator: boolean }): void {
   ctx.inject(['sessionProjections'] as never, ((projectionCtx: { sessionProjections: { register: (d: unknown) => void } }) => {
     projectionCtx.sessionProjections.register(messageIndexProjectionDefinition)
   }) as never)
   ctx.inject(['webServer'] as never, ((wsCtx: { webServer: { register: (d: unknown) => void } }) => {
     wsCtx.webServer.register(favoritesRouteDefinition)
   }) as never)
+  // 设置（设置——插件页）：alpha.2 姿势——settings 服务注入 → installSection 声明 namespace
+  // （官方范例 web-search-deepseek / node-appearance 同款）；client 用 settingsScope 消费。
+  ctx.inject(['settings'], (settingsCtx) => {
+    settingsCtx.settings.installSection(ctx, CHAT_RAIL_NS, Config, config as never, {
+      setSource: () => {},
+      onChange: () => {},
+    })
+  })
 }
 
-export { apply, Config }
+export { apply }

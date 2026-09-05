@@ -30,7 +30,7 @@ import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the input.dock entry).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 
-export const inject = ['slots', 'sessions', 'conversation']
+export const inject = ['slots', 'sessions', 'conversation', 'settingsScope']
 
 // ---- i18n (DSH locale-aware, zh/en) ----
 type LocaleId = 'zh' | 'en'
@@ -51,6 +51,11 @@ const STRINGS: Record<LocaleId, Record<string, string>> = {
     fill: '填充到输入框',
     filled: '已填入输入框',
     favOnly: '只显示收藏',
+    settings: '设置',
+    cardName: '消息导航条',
+    cardDesc: '画卷式消息导航栏（chat-rail）——每条用户消息一个指示点，scroll-spy 跟随',
+    officialNav: '使用官方轮次导航条（对比模式）',
+    officialNavHint: '开启后隐藏本导航条、显示官方 TurnNavigator——便于与官方轮次导航对比（免重启即时生效）',
   },
   en: {
     railLabel: 'Message rail',
@@ -68,6 +73,11 @@ const STRINGS: Record<LocaleId, Record<string, string>> = {
     fill: 'Fill into input',
     filled: 'Filled into input',
     favOnly: 'Bookmarks only',
+    settings: 'Settings',
+    cardName: 'Message rail',
+    cardDesc: 'Canvas-style message navigation (chat-rail) — one dot per user message, scroll-spy follow',
+    officialNav: 'Use the official turn navigation (comparison mode)',
+    officialNavHint: 'Hides this rail and shows the official TurnNavigator — for A/B comparison with the official turn rail (applies instantly, no restart).',
   },
 }
 
@@ -207,12 +217,79 @@ const css = [
   'body[data-ds-dark-theme] .crl_favToggle:hover,[data-theme=\'dark\'] .crl_favToggle:hover,.dark .crl_favToggle:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.85)}',
   'body[data-ds-dark-theme] .crl_favToggle.crl_on,[data-theme=\'dark\'] .crl_favToggle.crl_on,.dark .crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.18)}',
   '@media (prefers-reduced-motion:reduce){.crl_nav,.crl_title,.crl_num,.crl_time,.crl_line{transition:none}.crl_tipImgPh{animation:none}}',
-  // 屏蔽官方 TurnNavigator（轮次导航竖轨，DSH 0.1.2-alpha.1+）：官方 rail 与本
-  // 插件 rail 同处会话面板右缘且只支持「轮次」维度，安装本插件后隐藏官方的，
-  // 由本插件统一承担消息导航。锚点用 aria-label（zh/en 双文案）而非 CSS module
-  // 类名（如 hkplfa_slot，hash 随构建内容漂移）。
-  'nav[aria-label="轮次导航"],nav[aria-label="Turn navigation"]{display:none !important}',
+  '.crlSetCard{list-style:none;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-3);transition:border-color .16s,background .16s;cursor:pointer}',
+  '.crlSetCard:hover{border-color:var(--dsw-alias-label-dimmed)}',
+  '.crlSetCardOpen{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-label-dimmed)}',
+  '.crlSetHeader{width:100%;appearance:none;border:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer;display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:12px}',
+  '.crlSetHeadText{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}',
+  '.crlSetName{font-size:15px;font-weight:600;line-height:1.4;color:var(--dsw-alias-label-primary)}',
+  '.crlSetDesc{font-size:13px;line-height:1.5;color:var(--dsw-alias-label-tertiary)}',
+  '.crlSetChevron{flex:none;color:var(--dsw-alias-label-tertiary);transition:transform .16s}',
+  '.crlSetChevronOn{transform:rotate(180deg)}',
+  '.crlSetBody{border-top:1px solid var(--dsw-alias-border-l2);margin:0 16px;padding-bottom:8px}',
+  '.crlSetRow{position:relative;display:flex;align-items:center;gap:10px;padding:10px 0 4px;cursor:default}',
+  '.crlSetRowLabel{flex:1;min-width:0;font-size:13px;font-weight:500;line-height:1.5;color:var(--dsw-alias-label-primary)}',
+  '.crlSetHint{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary);font-weight:400}',
+  '.crlSetSwitch{flex:none;width:40px;height:22px;border:none;border-radius:11px;cursor:pointer;padding:0;background:var(--dsw-alias-border-l4,rgba(0,0,0,.16));transition:background .15s}',
+  '.crlSetSwitch.on{background:var(--dsw-alias-state-business-primary,#4FC3F7)}',
+  '.crlSetKnob{display:block;width:16px;height:16px;border-radius:8px;background:#fff;margin-left:2px;transition:margin-left .15s;pointer-events:none}',
+  '.crlSetSwitch.on .crlSetKnob{margin-left:22px}',
 ].join('')
+
+/** 屏蔽官方 TurnNavigator（轮次导航竖轨，DSH 0.1.2-alpha.1+）的独立样式（不再无条件注入——由
+ *  「使用官方轮次导航条」设置开关控制）：官方 rail 与本插件 rail 同处会话面板右缘且只支持
+ *  「轮次」维度，默认隐藏官方、由本插件统一承担消息导航。锚点用 aria-label（zh/en 双文案）而非
+ *  CSS module 类名（如 hkplfa_slot，hash 随构建内容漂移）。 */
+const HIDE_OFFICIAL_CSS = 'nav[aria-label="轮次导航"],nav[aria-label="Turn navigation"]{display:none !important}'
+const HIDE_OFFICIAL_STYLE_ID = 'data-crl-hide-official'
+
+/** 按设置同步「屏蔽官方 TurnNavigator」样式（showOfficial=true=官方模式：不屏蔽）。 */
+export function syncOfficialHide(showOfficial: boolean): void {
+  const el = document.head.querySelector<HTMLStyleElement>(`style[${HIDE_OFFICIAL_STYLE_ID}]`)
+  if (showOfficial) {
+    if (el !== null) el.remove()
+    return
+  }
+  if (el === null) {
+    const tag = document.createElement('style')
+    tag.setAttribute(HIDE_OFFICIAL_STYLE_ID, '')
+    tag.textContent = HIDE_OFFICIAL_CSS
+    document.head.appendChild(tag)
+  }
+}
+
+/** 移除所有已注入的行内收藏/填充按钮（官方模式下的回溯清理）。 */
+export function clearRowActions(): void {
+  for (const row of document.querySelectorAll<HTMLElement>('[data-crl-actions="1"]')) {
+    for (const btn of row.querySelectorAll<HTMLElement>('[data-crl-star],[data-crl-fill]')) btn.remove()
+    row.dataset.crlActions = ''
+  }
+}
+
+// 「使用官方轮次导航条」设置（2026-09-05 对比模式）：与 node-appearance 同构——官方
+// settingsScope（设置——插件页的「可配置插件」卡片，keyed by namespace 'chat-rail'）。
+type RailSettings = { showOfficialNavigator?: boolean }
+let railSettingsScope: (({
+  getSnapshot(): { value?: RailSettings }
+  subscribe(listener: () => void): () => void
+}) & {
+  set(key: 'showOfficialNavigator', value: boolean): Promise<unknown>
+}) | null = null
+
+/** client apply 时绑定（settingsScope 官方服务提供）。 */
+export function bindRailSettingsScope(scope: unknown): void {
+  if (typeof scope !== 'object' || scope === null) return
+  railSettingsScope = (scope as {
+    bind<T>(spec: { namespace: string }): {
+      getSnapshot(): { value?: T }
+      subscribe(listener: () => void): () => void
+      set(key: keyof T & string, value: T[keyof T & string]): Promise<unknown>
+    }
+  }).bind<RailSettings>({ namespace: 'chat-rail' }) as never
+}
+
+/** No-op subscribe for useSyncExternalStore when the scope is not yet bound. */
+const NOOP_SUB = (() => () => {}) as () => () => void
 
 const STYLE_ID = '@max-null/dsh-chat-rail/styles.module.css'
 if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin-css="${STYLE_ID}"]`) === null) {
@@ -1066,6 +1143,25 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
     messages = collectFromNodes(nodeSnapshot)
   }
 
+  // 「使用官方轮次导航条」（对比模式，2026-09-05）：默认关（chat-rail 主导、隐藏官方）；打开 =
+  // 官方 TurnNavigator 显示 + 本 rail 隐藏 + 行内按钮清理。设置来自官方 settingsScope（设置——
+  // 插件页卡片），切换即时生效；rail 与卡片订阅同一 scope。
+  const railSettingsSnap = useSyncExternalStore(
+    railSettingsScope !== null ? (cb: () => void) => railSettingsScope!.subscribe(cb) : NOOP_SUB,
+    () => railSettingsScope?.getSnapshot() ?? { value: undefined },
+  )
+  const showOfficial = railSettingsSnap.value?.showOfficialNavigator === true
+  const applyOfficialMode = (on: boolean): void => {
+    syncOfficialHide(on)
+    if (on) {
+      clearRowActions()
+      if (navRef.current !== null) navRef.current.style.display = 'none'
+    } else if (navRef.current !== null) {
+      navRef.current.style.display = ''
+    }
+  }
+  useEffect(() => { applyOfficialMode(showOfficial) }, [showOfficial])
+
   // Favorites: per-session persisted set + a "bookmarks only" filter that
   // narrows the rail to favorited messages (mirrors dsh-milestone's
   // bookmarksOnly toggle; the DOM-injected buttons share the same store).
@@ -1262,8 +1358,11 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
   // changes so history paging and re-renders keep them present.
   useEffect(() => {
     if (typeof document === 'undefined' || document.body === null) return
-    return startActionInjector(t)
-  }, [t])
+    if (showOfficial) return
+    if (typeof document !== 'undefined') {
+      return startActionInjector(t)
+    }
+  }, [showOfficial, t])
 
   // Background full-history load: follow the runtime's authoritative hasMore
   // flag, but STOP as soon as the projection delivers.
@@ -1542,6 +1641,70 @@ function apply(ctx: ClientContext): void {
       conversation: ctx.conversation as unknown as { createDraftImages(files: readonly File[]): readonly { id: string }[] },
     }),
   }, TimelineRail))
+  // 设置（设置——插件页）：与 node-appearance 同构——注册「可配置插件」卡片（keyed by namespace）。
+  ctx.inject(['settingsScope'], (scope) => {
+    bindRailSettingsScope((scope as unknown as { settingsScope: unknown }).settingsScope)
+  })
+  ctx.slots.inject(('settings.plugin.item') as never, () => ctx.slots.register({
+    name: 'settings.plugin.item',
+    key: 'chat-rail',
+    inject: () => ({
+      setShowOfficialNavigator: (show: boolean) => railSettingsScope?.set('showOfficialNavigator', show),
+      t: langStrings(),
+    }),
+  } as never, ChatRailSettingsRow))
+}
+
+/** 设置——插件页卡片：chat-rail「使用官方轮次导航条」开关（对比模式，即时生效、免重启）。 */
+export interface ChatRailSettingsRowFace {
+  setShowOfficialNavigator(show: boolean): void
+  t: Record<string, string>
+}
+
+export function ChatRailSettingsRow({ setShowOfficialNavigator, t }: ChatRailSettingsRowFace): ReactNode {
+  const [open, setOpen] = useState(false)
+  const snap = useSyncExternalStore(
+    railSettingsScope !== null ? (cb: () => void) => railSettingsScope!.subscribe(cb) : NOOP_SUB,
+    () => railSettingsScope?.getSnapshot() ?? { value: undefined },
+  )
+  const on = snap.value?.showOfficialNavigator === true
+  return createElement('li', { className: 'crlSetCard' + (open ? ' crlSetCardOpen' : '') },
+    createElement('button', {
+      type: 'button',
+      className: 'crlSetHeader',
+      'aria-expanded': open,
+      onClick: () => setOpen((v) => !v),
+      children: [
+        createElement('span', { className: 'crlSetHeadText' },
+          createElement('span', { className: 'crlSetName' }, t.cardName),
+          createElement('span', { className: 'crlSetDesc' }, t.cardDesc),
+        ),
+        createElement('svg', {
+          className: 'crlSetChevron' + (open ? ' crlSetChevronOn' : ''),
+          viewBox: '0 0 14 14', width: 14, height: 14,
+          fill: 'none', 'aria-hidden': true,
+        }, createElement('path', {
+          d: 'M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z',
+          fill: 'currentColor',
+        })),
+      ],
+    }),
+    open ? createElement('div', { className: 'crlSetBody', children: [
+      createElement('div', { className: 'crlSetRow' }, [
+        createElement('div', { className: 'crlSetRowLabel' },
+          createElement('span', { className: 'crlSetHint' }, t.officialNavHint),
+        ),
+        createElement('button', {
+          type: 'button',
+          role: 'switch',
+          'aria-checked': on,
+          className: 'crlSetSwitch' + (on ? ' on' : ''),
+          onClick: () => setShowOfficialNavigator(!on),
+          children: createElement('span', { className: 'crlSetKnob' }),
+        }),
+      ]),
+    ] }) : null,
+  )
 }
 
 export { apply, TimelineRail, imageSpecsOfContent, normalize, jumpToMessage }

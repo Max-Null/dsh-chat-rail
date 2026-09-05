@@ -6,3 +6,8 @@ minimumReleaseAge: 0
 allowBuilds:
   esbuild: true
   node-pty: false
+# 2026-09-05：官方 rc.1 发布链 bug——某些包依赖 dsh-invariants@">=0.1.2 <0.2.0-0"，
+# 但 invariants 0.1.2-x 全是 prerelease（不满足 >=0.1.2），解析无匹配；pin 0.1.2-rc.1。
+overrides:
+  '@deepseek-ai/dsh-invariants': 0.1.2-rc.1
+
