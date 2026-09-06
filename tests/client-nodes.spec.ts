@@ -255,6 +255,30 @@ test('jumpToMessage: loadThrough path pages with one exact call and no loadOlder
   assert.equal(loadOlderCalls, 0)
 })
 
+test('jumpToMessage: invokes loadThrough as a method so the session this stays bound', async () => {
+  const stub = makeSessionStub({ hasMore: true })
+  const key = '13:input-messagea1'
+  let receiver: unknown = null
+  // A real Session is a class whose loadThrough reads this (openState/hasMore/…);
+  // a destructured bare call would lose the binding and throw on this.openState.
+  ;(stub.session as unknown as { loadThrough: (seq: number) => Promise<void> }).loadThrough = function (this: unknown) {
+    receiver = this
+    stub.setNodes(new Map([[key, userNode(key, 55, 'target')]]))
+    return Promise.resolve()
+  }
+  const result = await jumpToMessage(
+    { binding: () => ({ session: stub.session as never }) } as never,
+    's1',
+    key,
+    (k) => stub.session.getSnapshot().chat.nodes.get(k),
+    undefined,
+    undefined,
+    55,
+  )
+  assert.equal(result, false) // no DOM in node; the jump path itself resolved
+  assert.equal(receiver, stub.session)
+})
+
 test('jumpToMessage: loadThrough waits for a plain loadOlder owner to release the busy flag', async () => {
   const stub = makeSessionStub({ hasMore: true, loadingOlder: true })
   const key = '13:input-messagea1'
@@ -305,4 +329,74 @@ test('jumpToMessage: warns when loadThrough settles without the target node', as
   assert.deepEqual(throughCalls, [7])
   assert.equal(warnings.length, 1)
   assert.match(String(warnings[0]?.[0]), /not loaded after loadThrough\(7\)/)
+})
+
+test('jumpToMessage: skips loadThrough when the target node is already loaded', async () => {
+  const stub = makeSessionStub({ hasMore: true })
+  const key = '13:input-messagea1'
+  const throughCalls: number[] = []
+  let loadOlderCalls = 0
+  stub.setNodes(new Map([[key, userNode(key, 1, 'hi')]]))
+  ;(stub.session as unknown as { loadThrough: (seq:number) => Promise<void> }).loadThrough = async (seq: number) => {
+    throughCalls.push(seq)
+  }
+  stub.session.loadOlder = async () => { loadOlderCalls += 1 }
+  // Target is already inside the visible window: the jump must NOT page
+  // history in (official TurnNavigator behaviour — a near mark scrolls in
+  // place), even though a loadThrough-capable session is present.
+  const result = await jumpToMessage(
+    { binding: () => ({ session: stub.session as never }) } as never,
+    's1',
+    key,
+    (k) => stub.session.getSnapshot().chat.nodes.get(k),
+    undefined,
+    undefined,
+    1,
+  )
+  assert.equal(result, false) // no DOM in node: the jump itself resolved
+  assert.deepEqual(throughCalls, [])
+  assert.equal(loadOlderCalls, 0)
+})
+
+test('jumpToMessage: loaded target reports landed without any paging phase', async () => {
+  const stub = makeSessionStub({ hasMore: true })
+  const key = '13:input-messagea1'
+  const phases: string[] = []
+  stub.setNodes(new Map([[key, userNode(key, 1, 'hi')]]))
+  ;(stub.session as unknown as { loadThrough: (seq:number) => Promise<void> }).loadThrough = async () => {}
+  // Rails show a busy indicator only while history is actually paging in;
+  // a near mark must never flash "loading" (it scrolls in place).
+  const result = await jumpToMessage(
+    { binding: () => ({ session: stub.session as never }) } as never,
+    's1',
+    key,
+    (k) => stub.session.getSnapshot().chat.nodes.get(k),
+    undefined,
+    undefined,
+    1,
+    (phase) => { phases.push(phase) },
+  )
+  assert.equal(result, false) // no DOM in node
+  assert.deepEqual(phases, [])
+})
+
+test('jumpToMessage: unloaded target reports paging before settling', async () => {
+  const stub = makeSessionStub({ hasMore: true })
+  const key = '13:input-messagea1'
+  const phases: string[] = []
+  ;(stub.session as unknown as { loadThrough: (seq:number) => Promise<void> }).loadThrough = async (seq: number) => {
+    stub.setNodes(new Map([[key, userNode(key, seq, 'target')]]))
+  }
+  const result = await jumpToMessage(
+    { binding: () => ({ session: stub.session as never }) } as never,
+    's1',
+    key,
+    (k) => stub.session.getSnapshot().chat.nodes.get(k),
+    undefined,
+    undefined,
+    9,
+    (phase) => { phases.push(phase) },
+  )
+  assert.equal(result, false) // no DOM in node (scrolling phase unreachable)
+  assert.deepEqual(phases, ['paging'])
 })

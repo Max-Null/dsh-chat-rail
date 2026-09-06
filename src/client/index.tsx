@@ -99,12 +99,15 @@ function relativeTime(ts: number, s: Record<string, string>): string {
 // right 跟随 --dsh-sidebar-width、top 跟随 --dsh-sidebar-height，与 better-sidebar
 // 面板共享同一 CSS 变量 + transition，动画同步。
 const css = [
-  '.crl_nav{user-select:none;z-index:100;position:fixed;right:calc(var(--dsh-sidebar-width,0px) + 3px);top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:10px 0;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:thin;scrollbar-color:rgba(0,0,0,.18) transparent;transition:width .25s cubic-bezier(.4,0,.2,1),right var(--ds-transition-duration-slow,0.3s) var(--ds-ease-in-out,ease-in-out),top var(--ds-transition-duration-slow,0.3s) var(--ds-ease-in-out,ease-in-out),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
-  'body[data-ds-dark-theme] .crl_nav,[data-theme=\'dark\'] .crl_nav,.dark .crl_nav{background:rgba(28,28,32,.6);border-color:rgba(255,255,255,.09);scrollbar-color:rgba(255,255,255,.25) transparent}',
+  '.crl_nav{user-select:none;z-index:100;position:fixed;right:calc(var(--dsh-sidebar-width,0px) + 3px);top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:10px 0;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:none;transition:width .25s cubic-bezier(.4,0,.2,1),right var(--ds-transition-duration-slow,0.3s) var(--ds-ease-in-out,ease-in-out),top var(--ds-transition-duration-slow,0.3s) var(--ds-ease-in-out,ease-in-out),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
+  'body[data-ds-dark-theme] .crl_nav,[data-theme=\'dark\'] .crl_nav,.dark .crl_nav{background:rgba(28,28,32,.6);border-color:rgba(255,255,255,.09)}',
   '.crl_nav.crl_show{width:280px;overflow-y:auto;align-items:stretch;background:rgba(255,255,255,.94);border-color:rgba(0,0,0,.08);box-shadow:0 10px 30px rgba(0,0,0,.10),0 2px 8px rgba(0,0,0,.05)}',
   'body[data-ds-dark-theme] .crl_nav.crl_show,[data-theme=\'dark\'] .crl_nav.crl_show,.dark .crl_nav.crl_show{background:rgba(28,28,32,.96);border-color:rgba(255,255,255,.09);box-shadow:0 10px 30px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.28)}',
-  '.crl_nav::-webkit-scrollbar{width:4px}',
-  '.crl_nav::-webkit-scrollbar-thumb{background:rgba(0,0,0,.18);border-radius:4px}',
+  // Scrollbar hidden by design: the capsule is small and the marks read as a
+  // free-floating sequence — a bar that appears and disappears with the busy
+  // row (and with overflow peaks) flickers worse than no bar at all. Scrolling
+  // still works (overflow-y stays auto when expanded).
+  '.crl_nav::-webkit-scrollbar{width:0;height:0}',
   // Jump-in-progress indicator: sticky row pinned at the rail top. The spinner
   // icon is always visible; the "Loading…" label only appears once expanded
   // (in the collapsed 36px rail the text would overflow the capsule).
@@ -898,6 +901,11 @@ async function jumpToMessage(
   signal?: AbortSignal,
   /** Durable event seq of the target message (chatRail projection / node anchor seq). */
   targetSeq?: number,
+  /** Jump-phase signal: `'paging'` when history is actually being loaded in
+   *  (the rail's busy indicator), `'landed'` once the target row is located
+   *  and scrolling is about to run (indicator goes away even while the smooth
+   *  scroll settles — a near mark must never flash "loading"). */
+  onJump?: (phase: 'paging' | 'landed') => void,
 ): Promise<boolean> {
   const session = sessionsService.binding(sessionId)?.session
   if (session === undefined) return false
@@ -906,35 +914,43 @@ async function jumpToMessage(
     : nodeOf
   let pages = 0
   let loaded = false
-  const jumpLoadThrough = (session as { loadThrough?: ((seq: number) => Promise<unknown>) | undefined }).loadThrough
-  if (typeof jumpLoadThrough === 'function' && targetSeq !== undefined && Number.isSafeInteger(targetSeq)) {
+  const jumpSession = session as { loadThrough?: ((seq: number) => Promise<unknown>) | undefined }
+  if (typeof jumpSession.loadThrough === 'function' && targetSeq !== undefined && Number.isSafeInteger(targetSeq)) {
     // A plain pull owns the busy flag during its single page; loadThrough does
     // not queue behind it, so wait for the owner instead of returning a false
     // "done" on the first probe.
-    let spin = 0
-    while (spin++ < 120) {
+    if (!isLoaded(key)) {
+      let spin = 0
+      while (spin++ < 120) {
+        if (signal?.aborted) return false
+        const snapshot = session.getSnapshot() as { loadingOlder?: boolean } | undefined
+        if (snapshot?.loadingOlder !== true) break
+        await delay(50)
+      }
       if (signal?.aborted) return false
-      const snapshot = session.getSnapshot() as { loadingOlder?: boolean } | undefined
-      if (snapshot?.loadingOlder !== true) break
-      await delay(50)
+      onJump?.('paging')
+      await jumpSession.loadThrough(targetSeq)
+      // The pager settles when the window covers targetSeq (or history is
+      // exhausted), but the chat view assembles the paged window asynchronously:
+      // poll the node before concluding, bounded the same way as the DOM poll.
+      let spinNode = 0
+      while (spinNode++ < 100) {
+        if (signal?.aborted) return false
+        if (isLoaded(key)) { loaded = true; break }
+        await delay(50)
+      }
+      if (!loaded) {
+        console.warn(`[chat-rail] jumpToMessage: node "${key}" not loaded after loadThrough(${String(targetSeq)})`)
+        return false
+      }
     }
-    if (signal?.aborted) return false
-    await jumpLoadThrough(targetSeq)
-    // The pager settles when the window covers targetSeq (or history is
-    // exhausted), but the chat view assembles the paged window asynchronously:
-    // poll the node before concluding, bounded the same way as the DOM poll.
-    let spinNode = 0
-    while (spinNode++ < 100) {
-      if (signal?.aborted) return false
-      if (isLoaded(key)) { loaded = true; break }
-      await delay(50)
-    }
-    if (!loaded) {
-      console.warn(`[chat-rail] jumpToMessage: node "${key}" not loaded after loadThrough(${String(targetSeq)})`)
-      return false
-    }
+    // Target already inside the visible window: no paging (official
+    // TurnNavigator behaviour — near marks scroll in place), so a click on a
+    // close message lands immediately instead of re-running the jump loader.
+    loaded = true
   } else {
     let guard = 0
+    let reportedPaging = false
     while (guard++ < 120) {
       if (signal?.aborted) return false
       const snapshot = session.getSnapshot() as { hasMore?: boolean; loadingOlder?: boolean } | undefined
@@ -948,6 +964,7 @@ async function jumpToMessage(
         await delay(50)
         continue
       }
+      if (!reportedPaging) { onJump?.('paging'); reportedPaging = true }
       await session.loadOlder()
       pages++
       // Report progress only on page boundaries, not every loop iteration.
@@ -974,6 +991,9 @@ async function jumpToMessage(
     await delay(50)
   }
   if (row === null) return false
+  // Row located: scrolling is the visible feedback — drop the busy indicator
+  // here even though the smooth scroll (and its re-verify steps) still run.
+  onJump?.('landed')
   const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
   // DSH 0.1.2-alpha.3+ paging compensates the reader position while the newly
   // prepended window re-flows — a scrollIntoView issued right after a multi-
@@ -985,8 +1005,14 @@ async function jumpToMessage(
   const scrollToRow = (): void => {
     const viewRect = scrollport.getBoundingClientRect()
     const rowRect = (row as Element).getBoundingClientRect()
-    const target = scrollport.scrollTop + (rowRect.top - viewRect.top) - (viewRect.height - rowRect.height) / 2
-    if (target < 0) return
+    // Clamp at the top edge instead of bailing out: the FIRST message's row
+    // sits at the document head, where the centred target is negative — the
+    // old `if (target < 0) return` silently dropped the jump and made every
+    // click on the first rail item a no-op.
+    const target = Math.max(
+      0,
+      scrollport.scrollTop + (rowRect.top - viewRect.top) - (viewRect.height - rowRect.height) / 2,
+    )
     scrollport.scrollTo({ top: target, behavior: reducedMotion ? 'auto' : 'smooth' })
   }
   const rowDelta = (): number => {
@@ -1474,7 +1500,6 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
         jumpAbortRef.current?.abort()
         const controller = new AbortController()
         jumpAbortRef.current = controller
-        setJumping(true)
         void jumpToMessage(
           sessionsService as never,
           sessionId as string,
@@ -1486,6 +1511,11 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
           // rail page history with one exact loadThrough call instead of a
           // loadOlder loop (50 messages per page) from the window head.
           m.seq,
+          // Busy indicator only while history is actually paging in; a near
+          // mark (already loaded) never flashes "loading", and the indicator
+          // drops as soon as the target row is located — before the smooth
+          // scroll settles, which is the visible feedback itself.
+          (phase) => setJumping(phase === 'paging'),
         ).finally(() => setJumping(false))
       },
       onMouseEnter: () => handleItemEnter(i),
