@@ -212,7 +212,14 @@ const css = [
   // 正确解法：`top:0` 与胶囊内边缘齐平，并给按钮**自己的不透明底色**——滚动行
   // 从容器 padding 缝隙经过时被底色挡住，而不是靠把控件挪出容器。展开态再补一条
   // 底部分隔线，读起来就是 panel header。
-  '.crl_favToggle{position:sticky;top:0;z-index:3;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:24px;margin:0 0 4px;padding:0;border:none;border-radius:12px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.94));color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
+  // 折叠态：靠右对齐，使星的中心与指示线中心重合。
+  // rail 宽 36px，`.crl_item` 是 `justify-content:flex-end` + `padding:0 9px`，
+  // 指示线宽 10px → 其中心距容器左边 22px。而 `.crl_nav` 为 `align-items:center`，
+  // 26px 宽的星若居中则中心在 18px —— 差 4px，就是截图里那点没对齐。
+  // 用 align-self:flex-end + margin-right 把两者的**中心**对到同一竖线上。
+  // 取 4px 是实测最优（CDP 量出 star/line 中心差 1px；3px 反而差 2px——
+  // 该按钮 background:inherit + align-self 的交互不是线性，别按算术推）。
+  '.crl_favToggle{position:sticky;top:0;z-index:3;flex-shrink:0;align-self:flex-end;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:24px;margin:0 4px 4px 0;padding:0;border:none;border-radius:12px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.94));color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
   '.crl_favToggle:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.75)}',
   '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
   // 展开态：整行 header（宽度与胶囊内宽一致），底部分隔线把它和消息行分开
