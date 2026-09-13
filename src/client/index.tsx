@@ -166,7 +166,17 @@ const css = [
   'body[data-ds-dark-theme] .crl_item:hover .crl_line,[data-theme=\'dark\'] .crl_item:hover .crl_line,.dark .crl_item:hover .crl_line{background-color:rgba(255,255,255,.95)}',
   'body[data-ds-dark-theme] .crl_item.crl_active .crl_line,[data-theme=\'dark\'] .crl_item.crl_active .crl_line,.dark .crl_item.crl_active .crl_line{background-color:var(--dsw-alias-state-business-primary,#4d6bfe)}',
   // Full-content hover panel: floats to the LEFT of the expanded rail list.
-  '.crl_tip{position:fixed;z-index:200;max-width:360px;max-height:70vh;overflow-y:auto;padding:10px 12px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary,var(--text-primary,rgba(0,0,0,.85)));background:var(--dsw-alias-surface-raised,var(--bg-elevated,rgba(255,255,255,.97)));border:1px solid var(--dsw-alias-border-l2,var(--border-default,rgba(0,0,0,.12)));border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.16);white-space:pre-wrap;word-break:break-word;pointer-events:none}',
+  // tip 里现在有**可点击项**（提问&回答），所以容器不能再 `pointer-events:none`；
+  // 同时需要一点存活宽限：鼠标从 rail 移到 tip 的途中会先触发 item 的 mouseleave，
+  // 否则 tip 在指针到达之前就被关掉，里面的按钮根本点不到（实测：坐标点击无效、
+  // 而元素 .click() 有效，即为此竞态）。
+  '.crl_tip{position:fixed;z-index:200;max-width:360px;max-height:70vh;overflow-y:auto;padding:10px 12px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary,var(--text-primary,rgba(0,0,0,.85)));background:var(--dsw-alias-surface-raised,var(--bg-elevated,rgba(255,255,255,.97)));border:1px solid var(--dsw-alias-border-l2,var(--border-default,rgba(0,0,0,.12)));border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.16);white-space:pre-wrap;word-break:break-word;pointer-events:auto}',
+  // tip 里的「提问&回答」区（用户 2026-09-14 重新设计：问答不进导航条，收在这里）
+  '.crl_tipQaWrap{margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.1));display:flex;flex-direction:column;gap:4px;pointer-events:auto}',
+  '.crl_tipQa{display:flex;align-items:flex-start;gap:6px;width:100%;box-sizing:border-box;padding:5px 8px;border:none;border-radius:7px;background:rgba(77,107,254,.08);color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .15s ease}',
+  '.crl_tipQa:hover{background:rgba(77,107,254,.16)}',
+  '.crl_tipQaMark{flex:none;width:14px;height:14px;border-radius:7px;background:var(--dsw-alias-state-business-primary,#4d6bfe);color:#fff;font-size:10px;line-height:14px;text-align:center;font-weight:600}',
+  '.crl_tipQaText{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   'body[data-ds-dark-theme] .crl_tip,[data-theme=\'dark\'] .crl_tip,.dark .crl_tip{background:var(--dsw-alias-surface-raised,var(--bg-elevated,rgba(28,28,32,.97)));border-color:var(--dsw-alias-border-l2,var(--border-default,rgba(255,255,255,.14)))}',
   // Tip thumbnail gallery: stacked above the text, one row per image, capped
   // height so a tall screenshot cannot swallow the preview panel. The
@@ -349,6 +359,10 @@ const S = {
   loading: 'crl_loading',
   loadingLabel: 'crl_loadingLabel',
   tip: 'crl_tip',
+  tipQaWrap: 'crl_tipQaWrap',
+  tipQa: 'crl_tipQa',
+  tipQaMark: 'crl_tipQaMark',
+  tipQaText: 'crl_tipQaText',
   tipImgs: 'crl_tipImgs',
   tipImgWrap: 'crl_tipImgWrap',
   tipImg: 'crl_tipImg',
@@ -1318,12 +1332,11 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
   if (messages.length === 0) {
     messages = collectFromNodes(nodeSnapshot)
   }
-  // 「提问&回答」并入导航：host 投影只含用户消息，问答来自助手节点的 tool-call，
-  // 两者互不重叠，因此与投影路径并存也安全（详见 collectQaFromNodes）。
+  // 「提问&回答」**不进导航条**（2026-09-14 用户重新设计）：
+  // 它挂在所属消息的 hover tip 面板里，在 tip 中点击跳转到问答本身。
+  // 这样导航条只保留一级用户消息，完全规避了「二级条目要缩进 + 一级/二级指示线
+  // 位置一样无法区分」的层级问题。
   const qaMessages = collectQaFromNodes(nodeSnapshot)
-  if (qaMessages.length > 0) {
-    messages = [...messages, ...qaMessages].sort((a, b) => a.seq - b.seq)
-  }
 
   // 「使用官方轮次导航条」（对比模式，2026-09-05）：默认关（chat-rail 主导、隐藏官方）；打开 =
   // 官方 TurnNavigator 显示 + 本 rail 隐藏 + 行内按钮清理。设置来自官方 settingsScope（设置——
@@ -1452,9 +1465,24 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
     positionTip(index)
   }
 
-  const handleItemLeave = (index: number) => {
-    setTip((prev) => (prev?.index === index ? null : prev))
+  // rail 与 tip 之间有间隙：指针从条目移向 tip 时会先触发 item 的 mouseleave。
+  // 留一点宽限（180ms），并在指针真正进入 tip 时取消，否则 tip 会在指针到达前
+  // 消失、其中的问答按钮点不到（实测坐标点击无效而元素 .click() 有效即此因）。
+  const tipCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelTipClose = () => {
+    if (tipCloseTimerRef.current !== null) {
+      clearTimeout(tipCloseTimerRef.current)
+      tipCloseTimerRef.current = null
+    }
   }
+  const handleItemLeave = (index: number) => {
+    cancelTipClose()
+    tipCloseTimerRef.current = setTimeout(() => {
+      tipCloseTimerRef.current = null
+      setTip((prev) => (prev?.index === index ? null : prev))
+    }, 180)
+  }
+  useEffect(() => cancelTipClose, [])
 
   // Track the settled expand state: when `show` flips true, wait for the width
   // transition to end before allowing tip triggers; when it flips false, the
@@ -1806,6 +1834,9 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
       ? createElement('div', {
           className: S.tip,
           style: { left: `${tip.x}px`, top: `${tip.y}px`, transform: 'translateX(-100%)' },
+          // 指针进入 tip 时取消待关闭定时器（见 handleItemLeave 的宽限说明）
+          onMouseEnter: () => cancelTipClose(),
+          onMouseLeave: () => setTip(null),
         }, (() => {
           const m = messages[tipIndex]
           const specs = tipImagesOf(m, nodeSnapshot)
@@ -1824,6 +1855,42 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
             children.push(createElement('span', { className: S.tipBadge, key: 'badge' }, t.hasImage))
           }
           children.push(createElement('span', { key: 'text' }, fullTextOf(m, nodeSnapshot) || t.noText))
+          // 该消息之后、下一条消息之前的问答（「提问一定在某条消息的回答中」，用户语）。
+          // 从后往前收：问答的 seq ≥ 本消息 seq 即属于本消息区间。
+          const qaForTip: RailMessage[] = []
+          for (let qi = qaMessages.length - 1; qi >= 0; qi--) {
+            if (qaMessages[qi].seq >= m.seq) qaForTip.unshift(qaMessages[qi])
+          }
+          if (qaForTip.length > 0) {
+            children.push(createElement('div', { className: S.tipQaWrap, key: 'qa' },
+              qaForTip.map((q) => createElement('button', {
+                type: 'button',
+                key: q.key ?? q.anchor,
+                className: S.tipQa,
+                title: q.text,
+                onClick: (e: MouseEvent) => {
+                  e.stopPropagation()
+                  if (jumping) return
+                  jumpAbortRef.current?.abort()
+                  const controller = new AbortController()
+                  jumpAbortRef.current = controller
+                  void jumpToMessage(
+                    sessionsService as never,
+                    sessionId as string,
+                    nodeKeyOf(q) as string,
+                    (k) => chatNodeOf(fallbackStore.getSnapshot(), k),
+                    undefined,
+                    controller.signal,
+                    q.seq,
+                    (phase) => setJumping(phase === 'paging'),
+                  ).finally(() => setJumping(false))
+                },
+                children: [
+                  createElement('span', { className: S.tipQaMark, key: 'mark', 'aria-hidden': true }, '?'),
+                  createElement('span', { className: S.tipQaText, key: 'txt' }, q.text),
+                ],
+              }))))
+          }
           return children
         })())
       : null],
