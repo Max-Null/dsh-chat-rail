@@ -1135,7 +1135,7 @@ async function jumpToMessage(
   // scrollport geometry to go quiet, land with an explicit scrollTo computed
   // from the row's viewport rect, then re-verify a few times: a stray
   // bottom-follow can still pull the flight back.
-  const scrollToRow = (): void => {
+  const scrollToRow = (instant = false): void => {
     const viewRect = scrollport.getBoundingClientRect()
     const rowRect = (row as Element).getBoundingClientRect()
     // Clamp at the top edge instead of bailing out: the FIRST message's row
@@ -1146,7 +1146,9 @@ async function jumpToMessage(
       0,
       scrollport.scrollTop + (rowRect.top - viewRect.top) - (viewRect.height - rowRect.height) / 2,
     )
-    scrollport.scrollTo({ top: target, behavior: reducedMotion ? 'auto' : 'smooth' })
+    // `instant`（instant 或 reduced-motion）走 auto：平滑滚动在窗口失焦时可能
+    // 完全不推进，复核阶段因此改用即时滚动兜底。
+    scrollport.scrollTo({ top: target, behavior: instant || reducedMotion ? 'auto' : 'smooth' })
   }
   const rowDelta = (): number => {
     const viewRect = scrollport.getBoundingClientRect()
@@ -1172,7 +1174,9 @@ async function jumpToMessage(
     await delay(600)
     if (signal?.aborted) return false
     if (rowDelta() <= Math.max(120, scrollport.getBoundingClientRect().height * 0.2)) break
-    scrollToRow()
+    // 复核未对齐时改用即时滚动：平滑滚动在失焦/无头窗口下可能不推进，
+    // 且分页后的滚动补偿会把它拉回，于是整次跳转看不出任何位移。
+    scrollToRow(true)
   }
   return true
 }
