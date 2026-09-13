@@ -225,7 +225,8 @@ const css = [
   // 空间不足（会话区被右侧边栏遮到没有参考价值）时整体退场。
   // 用 opacity + pointer-events 而不是 display:none —— 官方模式的切换要能直接
   // 复用 nav 的内联 display，两者不该互相覆盖。
-  '.crl_navHidden{opacity:0 !important;pointer-events:none !important;transition:opacity .2s ease}',
+  // 选择器带 .crl_nav 提特异性：单类版本实测只有 pointer-events 生效、opacity 未淡出。
+  '.crl_nav.crl_navHidden{opacity:0 !important;pointer-events:none !important}',
   'body[data-ds-dark-theme] .crl_favToggle.crl_on,[data-theme=\'dark\'] .crl_favToggle.crl_on,.dark .crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.18)}',
   '@media (prefers-reduced-motion:reduce){.crl_nav,.crl_title,.crl_num,.crl_time,.crl_line{transition:none}.crl_tipImgPh{animation:none}}',
   '.crlSetCard{list-style:none;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-3);transition:border-color .16s,background .16s;cursor:pointer}',
@@ -634,6 +635,15 @@ interface RailMessage {
   key?: string
   id?: string
   /**
+   * DOM 锚点键（`data-chat-anchor-key` 的值），与 `key`（chat node key）**不同**。
+   *
+   * 问答条目由 `collectQaFromNodes` 设置：它的 `key` 是 tool-call 的 **node key**
+   * （jumpToMessage 用它判断"是否已加载"），而锚点是 `call:<callId>`
+   * （ui-tool/ToolCallTree.tsx:36 设的那个属性，用来在 DOM 里定位行）。
+   * 两者混用会导致「永远判定未加载 → 不滚动」。
+   */
+  anchor?: string
+  /**
    * 「提问&回答」条目（`ask_user_question` 的 tool-call）。
    *
    * 它们由 `collectQaFromNodes` 从助手节点收集，与批量投影无关；`key` 是官方
@@ -886,30 +896,40 @@ export function collectQaFromNodes(snapshot: unknown): RailMessage[] {
   const out: RailMessage[] = []
   for (const node of nodeValuesOf(snapshot)) {
     if (node === null || typeof node !== 'object') continue
-    const n = node as {
-      kind?: unknown
-      anchorSeq?: unknown
-      data?: { time?: unknown, blocks?: unknown }
+    const n = node as { kind?: unknown, anchorSeq?: unknown, data?: unknown }
+    // `tool-call` 是**独立节点**（不是助手消息里的块）：
+    // ui-chat/conversation-nodes/tool.ts 的 toolDefinition.kind = 'tool-call'，
+    // data 形如 { root }（ToolChatData）。
+    if (n.kind !== 'tool-call') continue
+    const root = (n.data as { root?: unknown } | undefined)?.root
+    if (root === null || typeof root !== 'object') continue
+    const r = root as {
+      callId?: unknown
+      name?: unknown
+      argsRaw?: unknown
+      call?: { name?: unknown, argsRaw?: unknown }
+      seq?: unknown
+      time?: unknown
     }
-    if (n.kind !== 'assistant') continue
-    const blocks = n.data?.blocks
-    if (!Array.isArray(blocks)) continue
-    for (const block of blocks) {
-      if (block === null || typeof block !== 'object') continue
-      const b = block as { kind?: unknown, callId?: unknown, name?: unknown, argsRaw?: unknown }
-      if (b.kind !== 'tool-call' || b.name !== 'ask_user_question') continue
-      if (typeof b.callId !== 'string' || b.callId === '') continue
-      const asked = questionsTextOf(b.argsRaw)
-      if (asked === '') continue
-      out.push({
-        seq: typeof n.anchorSeq === 'number' ? n.anchorSeq : 0,
-        time: typeof n.data?.time === 'number' ? n.data.time : 0,
-        text: asked,
-        hasImage: false,
-        key: `call:${b.callId}`,
-        qa: true,
-      })
-    }
+    const callId = typeof r.callId === 'string' ? r.callId : ''
+    if (callId === '') continue
+    // 运行中的根调用把 name/argsRaw 放在 root 上；完成后落在 root.call 里
+    const name = typeof r.name === 'string' ? r.name : (typeof r.call?.name === 'string' ? r.call.name : '')
+    if (name !== 'ask_user_question') continue
+    const argsRaw = typeof r.argsRaw === 'string' ? r.argsRaw : (typeof r.call?.argsRaw === 'string' ? r.call.argsRaw : '')
+    const asked = questionsTextOf(argsRaw)
+    if (asked === '') continue
+    out.push({
+      seq: typeof n.anchorSeq === 'number' ? n.anchorSeq : 0,
+      time: typeof r.time === 'number' ? r.time : 0,
+      text: asked,
+      hasImage: false,
+      // 两个身份分开：node key 用于「是否已加载」，DOM 锚点用于定位行。
+      key: typeof (n as { key?: unknown }).key === 'string' ? (n as { key: string }).key : undefined,
+      // 官方工具调用的 DOM 锚点格式（ui-tool/ToolCallTree.tsx:36）
+      anchor: `call:${callId}`,
+      qa: true,
+    })
   }
   out.sort((a, b) => a.seq - b.seq)
   return out
@@ -934,11 +954,18 @@ function questionsTextOf(argsRaw: unknown): string {
   return parts.join(' / ').trim().slice(0, 80)
 }
 
-/** Resolve the chat node's data-chat-anchor-key (direct key or id-reconstructed). */
+/** Resolve the DOM anchor key (`data-chat-anchor-key`) for one rail message. */
 function anchorKeyOf(m: RailMessage): string | undefined {
+  // 问答条目把两个身份分开存：node key 在 m.key，DOM 锚点在 m.anchor
+  if (typeof m.anchor === 'string' && m.anchor !== '') return m.anchor
   if (typeof m.key === 'string' && m.key !== '') return m.key
   if (typeof m.id === 'string' && m.id !== '') return '13:input-message' + m.id
   return undefined
+}
+
+/** Resolve the **chat node key** for one rail message (used for load checks). */
+function nodeKeyOf(m: RailMessage): string | undefined {
+  return typeof m.key === 'string' && m.key !== '' ? m.key : anchorKeyOf(m)
 }
 
 /** Full text of a rail message from the loaded chat nodes (uncapped),
@@ -1566,7 +1593,9 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
       const rect = sp.getBoundingClientRect()
       if (rect.height === 0) return
       const line = rect.top + rect.height * 0.4
-      const rows = sp.querySelectorAll('[data-chat-anchor-key^="13:input-message"]')
+      // 用户消息锚点是 `13:input-message<id>`；问答条目（②）挂在官方工具调用锚点上，
+      // 前缀是 `call:`。两者都要扫，否则问答永远算不出「当前位置」。
+      const rows = sp.querySelectorAll('[data-chat-anchor-key^="13:input-message"],[data-chat-anchor-key^="call:"]')
       let best = -1
       let bestDist = Infinity
       for (const row of rows) {
@@ -1632,6 +1661,9 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
       type: 'button',
       key: m.seq,
       'data-crl-index': String(i),
+      // 可寻址钩子：挂上真实锚点与问答标记，便于定位/排查（也让实机验证能直接断言）
+      ...(key !== undefined ? { 'data-crl-anchor': key } : {}),
+      ...(m.qa === true ? { 'data-crl-qa': 'true' } : {}),
       className: S.item + (activeIndex === i ? ` ${S.itemActive}` : '') + (starred ? ` ${S.favItem}` : ''),
       'aria-label': `${t.roleUser}: ${m.text.slice(0, 60) || t.noText} (${t.ariaJump})`,
       'aria-current': activeIndex === i ? 'location' : undefined,
@@ -1644,7 +1676,9 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
         void jumpToMessage(
           sessionsService as never,
           sessionId as string,
-          key,
+          // 判断「是否已加载」要用 **node key**：问答条目的 key 是 tool-call 节点键，
+          // 不是 DOM 锚点（混用会永远判定未加载 → 不滚动）。
+          nodeKeyOf(m) as string,
           (k) => chatNodeOf(fallbackStore.getSnapshot(), k),
           undefined,
           controller.signal,
