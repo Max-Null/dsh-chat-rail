@@ -13,6 +13,7 @@ import assert from 'node:assert/strict'
 import {
   chatNodeOf,
   collectFromNodes,
+  collectQaFromNodes,
   jumpToMessage,
   railMessageOfNode,
 } from '../src/client/index.tsx'
@@ -399,4 +400,67 @@ test('jumpToMessage: unloaded target reports paging before settling', async () =
   )
   assert.equal(result, false) // no DOM in node (scrolling phase unreachable)
   assert.deepEqual(phases, ['paging'])
+})
+
+// ---- collectQaFromNodes（「提问&回答」纳入导航）----
+//
+// 背景：`ask_user_question` 不是 chat node，而是助手消息里的一个 tool-call 块；
+// 用户答案落在同 callId 的 `tool/result`。实测会话日志确认**没有任何带问答痕迹的
+// user/message**，所以 railMessageOfNode 的 `kind==='user'` 判定永远覆盖不到它。
+
+/** One assistant chat node carrying assistant blocks. */
+function assistantNode(seq: number, blocks: unknown[], time = 1700000000000) {
+  return { key: `assistant:${String(seq)}`, kind: 'assistant', anchorSeq: seq, data: { time, blocks } }
+}
+
+/** ask_user_question 的 tool-call block（argsRaw 是官方记录的 JSON 串）。 */
+function askBlock(callId: string, questions: { header: string, question: string }[]) {
+  return { kind: 'tool-call', callId, name: 'ask_user_question', argsRaw: JSON.stringify({ questions }) }
+}
+
+test('collectQaFromNodes 从已加载的助手节点收集 ask_user_question，并挂 call: 锚点', () => {
+  const snap = chatSnapshotOf(
+    assistantNode(50, [askBlock('c1', [{ header: '第一步', question: '要做什么？' }])]),
+  )
+  const qa = collectQaFromNodes(snap)
+  assert.equal(qa.length, 1)
+  assert.equal(qa[0].qa, true)
+  // 官方工具调用的 DOM 锚点格式（ui-tool/ToolCallTree.tsx:36）
+  assert.equal(qa[0].key, 'call:c1')
+  assert.equal(qa[0].seq, 50)
+  assert.equal(qa[0].text, '第一步')
+})
+
+test('collectQaFromNodes 忽略非问答工具、缺 callId 与损坏的 argsRaw', () => {
+  const snap = chatSnapshotOf(
+    assistantNode(51, [
+      { kind: 'tool-call', callId: 'x1', name: 'bash', argsRaw: '{}' },
+      { kind: 'tool-call', name: 'ask_user_question', argsRaw: '{"questions":[{"header":"h"}]}' },
+      { kind: 'tool-call', callId: 'x2', name: 'ask_user_question', argsRaw: 'not-json' },
+      { kind: 'tool-call', callId: 'x3', name: 'ask_user_question', argsRaw: '{"questions":[]}' },
+      { kind: 'text', text: '普通文本块' },
+    ]),
+  )
+  assert.deepEqual(collectQaFromNodes(snap), [])
+})
+
+test('collectQaFromNodes 跳过非助手节点，并按 seq 升序返回', () => {
+  const snap = chatSnapshotOf(
+    assistantNode(70, [askBlock('c-late', [{ header: '后', question: 'q' }])]),
+    userNode('13:input-messageu1', 10, '用户消息'),
+    assistantNode(30, [askBlock('c-early', [{ header: '前', question: 'q' }])]),
+  )
+  const qa = collectQaFromNodes(snap)
+  assert.deepEqual(qa.map((m) => m.key), ['call:c-early', 'call:c-late'])
+})
+
+test('collectFromNodes 不含问答条目（两条通路互不重叠，故可安全并存）', () => {
+  const snap = chatSnapshotOf(
+    userNode('13:input-messageu1', 10, '用户消息'),
+    assistantNode(30, [askBlock('c1', [{ header: '提问', question: 'q' }])]),
+  )
+  const users = collectFromNodes(snap)
+  assert.equal(users.length, 1)
+  assert.equal(users[0].key, '13:input-messageu1')
+  assert.equal(users.some((m) => m.qa === true), false)
 })
