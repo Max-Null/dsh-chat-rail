@@ -201,23 +201,31 @@ const css = [
   // with the gold line, so the favorite-active state recasts the glow in the
   // same warm tone.
   '.crl_item.crl_favItem.crl_active .crl_line{background-color:#ffd166;box-shadow:0 0 6px #ffd166}',
-  // Rail-top favorites-only toggle: a round icon pill in the collapsed state;
-  // on expand it becomes a full-width label row (star + "bookmarks only") so
-  // the control reads as a real rail header action instead of a stray dot.
-  // STICKY: the expanded rail's rows scroll inside the capsule (overflow-y),
-  // and the pill must stay pinned at the top instead of scrolling away with
-  // them. The capsule has padding:10px 0 — sticky `top:0` would leave the
-  // last 10px of the scrollport uncovered, letting a passing row peek through
-  // above the pill. top:-10px shifts the pin edge to the capsule's true top
-  // (padding included), so rows scroll fully underneath.
-  '.crl_favToggle{position:sticky;top:-10px;z-index:3;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:26px;margin:0 0 6px;padding:0;border:none;border-radius:13px;background:inherit;color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
+  // Rail header action: 「只显示收藏」开关。折叠态是一个圆图标，展开态是整行的
+  // header（星标 + 文案 + 底部一条分隔线），与下方消息列表分层。
+  //
+  // 历史坑（2026-09-14 用户截图反馈）：这里曾用 `position:sticky; top:-10px`
+  // 把按钮上推到胶囊**外面**，代价是圆形 hover 背景骑在面板上边缘之上，看起来
+  // 像浮在导航条外面。sticky 本身是对的（展开态 `.crl_nav.crl_show` 是
+  // `overflow-y:auto`，列表会滚，header 必须钉住），错的是那 −10px。
+  //
+  // 正确解法：`top:0` 与胶囊内边缘齐平，并给按钮**自己的不透明底色**——滚动行
+  // 从容器 padding 缝隙经过时被底色挡住，而不是靠把控件挪出容器。展开态再补一条
+  // 底部分隔线，读起来就是 panel header。
+  '.crl_favToggle{position:sticky;top:0;z-index:3;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:24px;margin:0 0 4px;padding:0;border:none;border-radius:12px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.94));color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
   '.crl_favToggle:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.75)}',
   '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
-  '.crl_show .crl_favToggle{width:auto;height:26px;margin:0 6px 8px;padding:0 11px;border-radius:13px;align-self:flex-start;text-align:left}',
+  // 展开态：整行 header（宽度与胶囊内宽一致），底部分隔线把它和消息行分开
+  '.crl_show .crl_favToggle{width:calc(100% - 12px);height:26px;margin:0 6px 6px;padding:0 10px;border-radius:12px;justify-content:flex-start;text-align:left;border-bottom:1px solid rgba(0,0,0,.07)}',
   '.crl_favToggleLabel{display:none}',
   '.crl_show .crl_favToggleLabel{display:inline-block;min-width:0;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}',
-  'body[data-ds-dark-theme] .crl_favToggle,[data-theme=\'dark\'] .crl_favToggle,.dark .crl_favToggle{color:rgba(255,255,255,.4)}',
+  'body[data-ds-dark-theme] .crl_favToggle,[data-theme=\'dark\'] .crl_favToggle,.dark .crl_favToggle{color:rgba(255,255,255,.4);background:var(--dsw-alias-bg-layer-2,rgba(30,32,38,.94))}',
   'body[data-ds-dark-theme] .crl_favToggle:hover,[data-theme=\'dark\'] .crl_favToggle:hover,.dark .crl_favToggle:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.85)}',
+  'body[data-ds-dark-theme] .crl_show .crl_favToggle,[data-theme=\'dark\'] .crl_show .crl_favToggle,.dark .crl_show .crl_favToggle{border-bottom-color:rgba(255,255,255,.1)}',
+  // 空间不足（会话区被右侧边栏遮到没有参考价值）时整体退场。
+  // 用 opacity + pointer-events 而不是 display:none —— 官方模式的切换要能直接
+  // 复用 nav 的内联 display，两者不该互相覆盖。
+  '.crl_navHidden{opacity:0 !important;pointer-events:none !important;transition:opacity .2s ease}',
   'body[data-ds-dark-theme] .crl_favToggle.crl_on,[data-theme=\'dark\'] .crl_favToggle.crl_on,.dark .crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.18)}',
   '@media (prefers-reduced-motion:reduce){.crl_nav,.crl_title,.crl_num,.crl_time,.crl_line{transition:none}.crl_tipImgPh{animation:none}}',
   '.crlSetCard{list-style:none;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-3);transition:border-color .16s,background .16s;cursor:pointer}',
@@ -260,6 +268,16 @@ export function syncOfficialHide(showOfficial: boolean): void {
     document.head.appendChild(tag)
   }
 }
+
+/**
+ * 会话区剩余宽度低于此值时隐藏导航条（px）。
+ *
+ * 36px 是 rail 自身宽度，留 ~220px 给消息区——再窄时指示点已无参考意义。
+ */
+const RAIL_MIN_SPACE = 260
+
+/** 导航条隐藏类（空间不足时由 React 加上；用类而非内联 display，避免与官方模式冲突）。 */
+const NAV_HIDDEN_CLASS = 'crl_navHidden'
 
 /** 移除所有已注入的行内收藏/填充按钮（官方模式下的回溯清理）。 */
 export function clearRowActions(): void {
@@ -615,6 +633,13 @@ interface RailMessage {
   images?: RailImage[]
   key?: string
   id?: string
+  /**
+   * 「提问&回答」条目（`ask_user_question` 的 tool-call）。
+   *
+   * 它们由 `collectQaFromNodes` 从助手节点收集，与批量投影无关；`key` 是官方
+   * 工具调用的 DOM 锚点 `call:<callId>`，因此同样能跳转。
+   */
+  qa?: boolean
 }
 
 /** One displayable tip image: either a durable reference (resolved lazily) or
@@ -826,6 +851,87 @@ export function collectFromNodes(snapshot: unknown): RailMessage[] {
   }
   out.sort((a, b) => a.seq - b.seq)
   return out
+}
+
+/** 任一数据平面的节点集合（与 collectFromNodes 同一套取值规则）。 */
+function nodeValuesOf(snapshot: unknown): unknown[] {
+  const store = (snapshot as ChatSnapshotLike | undefined)?.nodes as ChatNodeStoreLike | undefined
+  if (store !== undefined && typeof store.values === 'function') {
+    return [...store.values()]
+  }
+  const chat = (snapshot as { chat?: { nodes?: Map<unknown, unknown> } } | undefined)?.chat
+  if (chat?.nodes === undefined) return []
+  return [...chat.nodes.values()]
+}
+
+/**
+ * 「提问&回答」也要能被导航。
+ *
+ * 它**不是** chat node：`ask_user_question` 是助手消息里的一个 tool-call 块，
+ * 用户的答案落在同一个 callId 的 `tool/result`（实测会话日志：有 `tool/call
+ * name=ask_user_question` 与对应结果，**没有任何带问答痕迹的 user/message**）。
+ * 所以 `railMessageOfNode` 的 `kind==='user'` 判定永远覆盖不到它。
+ *
+ * 但官方给工具调用也设了 DOM 锚点（`ui-tool/ToolCallTree.tsx:36` →
+ * `data-chat-anchor-key={`call:${callId}`}`），所以**可跳转**——只要把
+ * 助手节点里的问答块收集成 rail 条目即可。
+ *
+ * 范围：只覆盖已加载的 chat node（不做 loadThrough 拉取未加载历史）——
+ * 用户 2026-09-14 拍板。
+ *
+ * @param snapshot - 当前 chat node 快照（任一平面）。
+ * @returns 按 seq 升序的问答条目。
+ */
+export function collectQaFromNodes(snapshot: unknown): RailMessage[] {
+  const out: RailMessage[] = []
+  for (const node of nodeValuesOf(snapshot)) {
+    if (node === null || typeof node !== 'object') continue
+    const n = node as {
+      kind?: unknown
+      anchorSeq?: unknown
+      data?: { time?: unknown, blocks?: unknown }
+    }
+    if (n.kind !== 'assistant') continue
+    const blocks = n.data?.blocks
+    if (!Array.isArray(blocks)) continue
+    for (const block of blocks) {
+      if (block === null || typeof block !== 'object') continue
+      const b = block as { kind?: unknown, callId?: unknown, name?: unknown, argsRaw?: unknown }
+      if (b.kind !== 'tool-call' || b.name !== 'ask_user_question') continue
+      if (typeof b.callId !== 'string' || b.callId === '') continue
+      const asked = questionsTextOf(b.argsRaw)
+      if (asked === '') continue
+      out.push({
+        seq: typeof n.anchorSeq === 'number' ? n.anchorSeq : 0,
+        time: typeof n.data?.time === 'number' ? n.data.time : 0,
+        text: asked,
+        hasImage: false,
+        key: `call:${b.callId}`,
+        qa: true,
+      })
+    }
+  }
+  out.sort((a, b) => a.seq - b.seq)
+  return out
+}
+
+/** 问答条目的预览文本：取 `arguments` JSON 里的问题标题（多问用 ` / ` 连）。 */
+function questionsTextOf(argsRaw: unknown): string {
+  if (typeof argsRaw !== 'string' || argsRaw.trim() === '') return ''
+  let parsed: unknown
+  try { parsed = JSON.parse(argsRaw) } catch { return '' }
+  const list = (parsed as { questions?: unknown } | null)?.questions
+  if (!Array.isArray(list)) return ''
+  const parts: string[] = []
+  for (const q of list) {
+    if (q === null || typeof q !== 'object') continue
+    const o = q as { header?: unknown, question?: unknown }
+    const text = typeof o.header === 'string' && o.header !== ''
+      ? o.header
+      : typeof o.question === 'string' ? o.question : ''
+    if (text !== '') parts.push(text)
+  }
+  return parts.join(' / ').trim().slice(0, 80)
 }
 
 /** Resolve the chat node's data-chat-anchor-key (direct key or id-reconstructed). */
@@ -1168,6 +1274,12 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
   if (messages.length === 0) {
     messages = collectFromNodes(nodeSnapshot)
   }
+  // 「提问&回答」并入导航：host 投影只含用户消息，问答来自助手节点的 tool-call，
+  // 两者互不重叠，因此与投影路径并存也安全（详见 collectQaFromNodes）。
+  const qaMessages = collectQaFromNodes(nodeSnapshot)
+  if (qaMessages.length > 0) {
+    messages = [...messages, ...qaMessages].sort((a, b) => a.seq - b.seq)
+  }
 
   // 「使用官方轮次导航条」（对比模式，2026-09-05）：默认关（chat-rail 主导、隐藏官方）；打开 =
   // 官方 TurnNavigator 显示 + 本 rail 隐藏 + 行内按钮清理。设置来自官方 settingsScope（设置——
@@ -1187,6 +1299,35 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
     }
   }
   useEffect(() => { applyOfficialMode(showOfficial) }, [showOfficial])
+
+  // ── 会话区剩余空间 → 空间不足时隐藏（2026-09-14 用户要求）──────────────────
+  // 官方右侧边栏在宽屏是「挤压会话区」，窄屏会**完全遮住**会话区。遮住之后这条
+  // 导航条失去参考物，应该跟着退场（用户原话：「会话区域都被遮挡时，消息导航条
+  // 也就没有存在意义了，应该也不展示」）。
+  //
+  // 判据（用户拍板）：**会话区剩余宽度不足就隐藏**。bundle 的 web-app 行把
+  // `--dsh-sidebar-width` 写在 :root 上，读它就能算剩余空间，不必依赖
+  // `[data-conversation-scroll]` 这类元素契约。
+  const [spaceTight, setSpaceTight] = useState(false)
+  useEffect(() => {
+    const measure = (): void => {
+      if (typeof document === 'undefined') return
+      const raw = getComputedStyle(document.documentElement).getPropertyValue('--dsh-sidebar-width').trim()
+      const sidebar = raw.endsWith('px') ? Number.parseFloat(raw) : 0
+      const width = sidebar > 0 && Number.isFinite(sidebar) ? sidebar : 0
+      const viewport = window.innerWidth
+      // rail 自身占 36px + 边距；余量低于阈值时认为会话区已被遮到没有参考价值
+      setSpaceTight(viewport > 0 && viewport - width < RAIL_MIN_SPACE)
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    // 侧边栏开合改的是 CSS 变量，不触发 resize；过渡约 300ms，故带防抖采样。
+    const timer = window.setInterval(measure, 250)
+    return () => {
+      window.removeEventListener('resize', measure)
+      window.clearInterval(timer)
+    }
+  }, [])
 
   // Favorites: per-session persisted set + a "bookmarks only" filter that
   // narrows the rail to favorited messages (mirrors dsh-milestone's
@@ -1565,7 +1706,7 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
     // ancestor, breaking the viewport coordinates the tip uses.
     [createElement('div', {
       ref: navRef,
-      className: S.nav + (show ? ` ${S.navShow}` : ''),
+      className: S.nav + (show ? ` ${S.navShow}` : '') + (spaceTight ? ` ${NAV_HIDDEN_CLASS}` : ''),
       role: 'navigation',
       'aria-label': t.railLabel,
       onMouseEnter: () => setShow(true),
