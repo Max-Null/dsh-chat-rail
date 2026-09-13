@@ -6,12 +6,11 @@
  *
  * Two deliberate fixes over the dsh-chat-timeline reference:
  *
- * 1. ANIMATION SYNC with dsh-better-sidebar. better-sidebar drives its layout
- *    push through the `--dsh-sidebar-width` CSS variable on `:root` (the
- *    `#root` margin-right transition reads the same variable). The rail's
- *    `right` is `calc(var(--dsh-sidebar-width, 0px) + 12px)` with the same
- *    transition timing, so rail and scrollport move together while the panel
- *    expands — no "panel first, scrollbar later" lag.
+ * 1. POSITION ANCHOR. The rail's right edge follows the conversation column
+ *    (`[data-conversation-scroll]`), not the viewport: the official right
+ *    sidebar pushes the conversation narrower, and the rail must travel with
+ *    it. `--dsh-sidebar-width` reads 0px on the current kernel, so a CSS-only
+ *    offset would pin the rail underneath that sidebar.
  *
  * 2. VISIBILITY. The reference rail is 34px wide with 8×2px rgba(0,0,0,.16)
  *    lines — nearly invisible on a light background. Here the rail keeps a
@@ -96,13 +95,14 @@ function relativeTime(ts: number, s: Record<string, string>): string {
 // 画卷式导航：单个容器，折叠态 36px 竖条；hover 时宽度从右往左展开到 280px
 // （打开画卷效果）。容器垂直方向在「去掉底栏后的可用区域」内居中：
 // top = (100vh - 底栏高)/2 + translateY(-50%)，底栏收起时正中、展开时上移避让。
-// right 跟随 --dsh-sidebar-width、top 跟随 --dsh-sidebar-height，与 better-sidebar
-// 面板共享同一 CSS 变量 + transition，动画同步。
+// right 由组件按**会话列右缘**计算后用内联样式给出（见 anchor）；这里的 3px 只是
+// 会话列尚未就绪时的兜底。`--dsh-sidebar-width` 在当前内核恒为 0px，不能用它定位——
+// 那会把 rail 钉死在视口右缘，右侧边栏一开就被压在面板下面。
 const css = [
   // 展开/收起用 ease-in-out 且两侧对称时长，减少「抖一下」（原来 width 用
   // cubic-bezier(.4,0,.2,1)、right/top 用 var(--ds-transition-duration-slow)，
   // 两条曲线不同步，中间过程会互相追）。
-  '.crl_nav{user-select:none;z-index:100;position:fixed;right:calc(var(--dsh-sidebar-width,0px) + 3px);top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:10px 0;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:none;transition:width .25s cubic-bezier(.4,0,.2,1),right .25s cubic-bezier(.4,0,.2,1),top .25s cubic-bezier(.4,0,.2,1),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
+  '.crl_nav{user-select:none;z-index:100;position:fixed;right:3px;top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:10px 0;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:none;transition:width .25s cubic-bezier(.4,0,.2,1),right .25s cubic-bezier(.4,0,.2,1),top .25s cubic-bezier(.4,0,.2,1),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
   // 列表容器：rail 自身不再滚动，滚动只发生在这一层，header 因此永远不覆盖条目。
   '.crl_list{display:flex;flex-direction:column;align-items:center;width:100%;min-height:0;flex:1 1 auto;position:relative;overflow-y:hidden;overflow-x:hidden;scrollbar-width:none}',
   'body[data-ds-dark-theme] .crl_nav,[data-theme=\'dark\'] .crl_nav,.dark .crl_nav{background:rgba(28,28,32,.6);border-color:rgba(255,255,255,.09)}',
@@ -1379,29 +1379,38 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
   // 导航条失去参考物，应该跟着退场（用户原话：「会话区域都被遮挡时，消息导航条
   // 也就没有存在意义了，应该也不展示」）。
   //
-  // 判据（用户拍板）：**会话区剩余宽度不足就隐藏**。bundle 的 web-app 行把
-  // `--dsh-sidebar-width` 写在 :root 上，读它就能算剩余空间，不必依赖
-  // `[data-conversation-scroll]` 这类元素契约。
-  const [spaceTight, setSpaceTight] = useState(false)
+  // 定位与显隐都锚在**会话列的右缘**上：官方右侧边栏默认 push 模式（面板展开时
+  // 会话区让出空间），此时会话列右缘左移，rail 必须跟着走；而 `--dsh-sidebar-width`
+  // 在当前内核恒为 0px，读它等于把 rail 钉死在视口右缘（右侧边栏一开就被压住）。
+  //
+  // 显隐判据（用户拍板）：**会话区剩余宽度不足就隐藏**——会话列窄到没有参考价值
+  // 时退场，右侧边栏造成的挤压同样计入。
+  const [anchor, setAnchor] = useState<{ right: number, width: number } | null>(null)
   useEffect(() => {
     const measure = (): void => {
       if (typeof document === 'undefined') return
-      const raw = getComputedStyle(document.documentElement).getPropertyValue('--dsh-sidebar-width').trim()
-      const sidebar = raw.endsWith('px') ? Number.parseFloat(raw) : 0
-      const width = sidebar > 0 && Number.isFinite(sidebar) ? sidebar : 0
-      const viewport = window.innerWidth
-      // rail 自身占 36px + 边距；余量低于阈值时认为会话区已被遮到没有参考价值
-      setSpaceTight(viewport > 0 && viewport - width < RAIL_MIN_SPACE)
+      const scrollport = document.querySelector<HTMLElement>('[data-conversation-scroll]')
+      if (scrollport === null) { setAnchor(null); return }
+      const rect = scrollport.getBoundingClientRect()
+      if (rect.width === 0) { setAnchor(null); return }
+      const next = { right: Math.max(0, Math.round(window.innerWidth - rect.right)), width: Math.round(rect.width) }
+      // 值不变时沿用旧对象，避免每轮采样都重渲染
+      setAnchor((prev) => (prev !== null && prev.right === next.right && prev.width === next.width ? prev : next))
     }
     measure()
+    const scrollport = document.querySelector<HTMLElement>('[data-conversation-scroll]')
+    const observer = typeof ResizeObserver === 'undefined' || scrollport === null ? null : new ResizeObserver(measure)
+    if (observer !== null && scrollport !== null) observer.observe(scrollport)
     window.addEventListener('resize', measure)
-    // 侧边栏开合改的是 CSS 变量，不触发 resize；过渡约 300ms，故带防抖采样。
-    const timer = window.setInterval(measure, 250)
+    // 兜底采样：右侧边栏开合改的是它自己的轨道宽度，过渡约 300ms
+    const timer = window.setInterval(measure, 400)
     return () => {
+      if (observer !== null) observer.disconnect()
       window.removeEventListener('resize', measure)
       window.clearInterval(timer)
     }
-  }, [])
+  }, [sessionId])
+  const spaceTight = anchor !== null && anchor.width < RAIL_MIN_SPACE
 
   // Favorites: per-session persisted set + a "bookmarks only" filter that
   // narrows the rail to favorited messages (mirrors dsh-milestone's
@@ -1805,6 +1814,8 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
     [createElement('div', {
       ref: navRef,
       className: S.nav + (show ? ` ${S.navShow}` : '') + (spaceTight ? ` ${NAV_HIDDEN_CLASS}` : ''),
+      // 右缘锚在会话列上：右侧边栏 push 时会话列左移，rail 随之左移（transition 带动画）
+      ...(anchor !== null ? { style: { right: `${anchor.right + 3}px` } } : {}),
       role: 'navigation',
       'aria-label': t.railLabel,
       onMouseEnter: () => setShow(true),
