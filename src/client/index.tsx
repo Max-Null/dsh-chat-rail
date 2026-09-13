@@ -173,9 +173,9 @@ const css = [
   '.crl_tip{position:fixed;z-index:200;max-width:360px;max-height:70vh;overflow-y:auto;padding:10px 12px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary,var(--text-primary,rgba(0,0,0,.85)));background:var(--dsw-alias-surface-raised,var(--bg-elevated,rgba(255,255,255,.97)));border:1px solid var(--dsw-alias-border-l2,var(--border-default,rgba(0,0,0,.12)));border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.16);white-space:pre-wrap;word-break:break-word;pointer-events:auto}',
   // tip 里的「提问&回答」区（用户 2026-09-14 重新设计：问答不进导航条，收在这里）
   '.crl_tipQaWrap{margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.1));display:flex;flex-direction:column;gap:4px;pointer-events:auto}',
-  '.crl_tipQa{display:flex;align-items:flex-start;gap:6px;width:100%;box-sizing:border-box;padding:5px 8px;border:none;border-radius:7px;background:rgba(77,107,254,.08);color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .15s ease}',
+  '.crl_tipQa{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:5px 8px;border:none;border-radius:7px;background:rgba(77,107,254,.08);color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .15s ease}',
   '.crl_tipQa:hover{background:rgba(77,107,254,.16)}',
-  '.crl_tipQaMark{flex:none;width:14px;height:14px;border-radius:7px;background:var(--dsw-alias-state-business-primary,#4d6bfe);color:#fff;font-size:10px;line-height:14px;text-align:center;font-weight:600}',
+  '.crl_tipQaIcon{flex:none;display:block;color:var(--dsw-alias-state-business-primary,#4d6bfe)}',
   '.crl_tipQaText{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   'body[data-ds-dark-theme] .crl_tip,[data-theme=\'dark\'] .crl_tip,.dark .crl_tip{background:var(--dsw-alias-surface-raised,var(--bg-elevated,rgba(28,28,32,.97)));border-color:var(--dsw-alias-border-l2,var(--border-default,rgba(255,255,255,.14)))}',
   // Tip thumbnail gallery: stacked above the text, one row per image, capped
@@ -361,7 +361,7 @@ const S = {
   tip: 'crl_tip',
   tipQaWrap: 'crl_tipQaWrap',
   tipQa: 'crl_tipQa',
-  tipQaMark: 'crl_tipQaMark',
+  tipQaIcon: 'crl_tipQaIcon',
   tipQaText: 'crl_tipQaText',
   tipImgs: 'crl_tipImgs',
   tipImgWrap: 'crl_tipImgWrap',
@@ -1886,7 +1886,24 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
                   ).finally(() => setJumping(false))
                 },
                 children: [
-                  createElement('span', { className: S.tipQaMark, key: 'mark', 'aria-hidden': true }, '?'),
+                  // Lucide `circle-help` at a 16-unit grid: outline icon, never a
+                  // rendered glyph (the boxed "?" read as an emoji marker).
+                  createElement('svg', {
+                    key: 'icon',
+                    className: S.tipQaIcon,
+                    viewBox: '0 0 16 16',
+                    width: 13,
+                    height: 13,
+                    fill: 'none',
+                    stroke: 'currentColor',
+                    strokeWidth: 1.6,
+                    strokeLinecap: 'round',
+                    strokeLinejoin: 'round',
+                    'aria-hidden': true,
+                  },
+                  createElement('circle', { cx: 8, cy: 8, r: 6.5, 'aria-hidden': true }),
+                  createElement('path', { d: 'M6.06 6a2 2 0 0 1 3.89.67c0 1.33-2 2-2 2', 'aria-hidden': true }),
+                  createElement('path', { d: 'M8 11.33h.01', 'aria-hidden': true })),
                   createElement('span', { className: S.tipQaText, key: 'txt' }, q.text),
                 ],
               }))))
