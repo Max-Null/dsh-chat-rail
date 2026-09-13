@@ -103,14 +103,18 @@ const css = [
   // cubic-bezier(.4,0,.2,1)、right/top 用 var(--ds-transition-duration-slow)，
   // 两条曲线不同步，中间过程会互相追）。
   '.crl_nav{user-select:none;z-index:100;position:fixed;right:calc(var(--dsh-sidebar-width,0px) + 3px);top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:10px 0;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:none;transition:width .25s cubic-bezier(.4,0,.2,1),right .25s cubic-bezier(.4,0,.2,1),top .25s cubic-bezier(.4,0,.2,1),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
+  // 列表容器：rail 自身不再滚动，滚动只发生在这一层，header 因此永远不覆盖条目。
+  '.crl_list{display:flex;flex-direction:column;align-items:center;width:100%;min-height:0;flex:1 1 auto;position:relative;overflow-y:hidden;overflow-x:hidden;scrollbar-width:none}',
   'body[data-ds-dark-theme] .crl_nav,[data-theme=\'dark\'] .crl_nav,.dark .crl_nav{background:rgba(28,28,32,.6);border-color:rgba(255,255,255,.09)}',
-  '.crl_nav.crl_show{width:280px;overflow-y:auto;align-items:stretch;background:rgba(255,255,255,.94);border-color:rgba(0,0,0,.08);box-shadow:0 10px 30px rgba(0,0,0,.10),0 2px 8px rgba(0,0,0,.05)}',
+  '.crl_nav.crl_show{width:280px;align-items:stretch;background:rgba(255,255,255,.94);border-color:rgba(0,0,0,.08);box-shadow:0 10px 30px rgba(0,0,0,.10),0 2px 8px rgba(0,0,0,.05)}',
   'body[data-ds-dark-theme] .crl_nav.crl_show,[data-theme=\'dark\'] .crl_nav.crl_show,.dark .crl_nav.crl_show{background:rgba(28,28,32,.96);border-color:rgba(255,255,255,.09);box-shadow:0 10px 30px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.28)}',
   // Scrollbar hidden by design: the capsule is small and the marks read as a
   // free-floating sequence — a bar that appears and disappears with the busy
   // row (and with overflow peaks) flickers worse than no bar at all. Scrolling
   // still works (overflow-y stays auto when expanded).
-  '.crl_nav::-webkit-scrollbar{width:0;height:0}',
+  '.crl_nav::-webkit-scrollbar,.crl_list::-webkit-scrollbar{width:0;height:0}',
+  // 列表独立滚动：header（收藏开关）留在流内、不覆盖列表内容。
+  '.crl_show .crl_list{overflow-y:auto;align-items:stretch}',
   // Jump-in-progress indicator: sticky row pinned at the rail top. The spinner
   // icon is always visible; the "Loading…" label only appears once expanded
   // (in the collapsed 36px rail the text would overflow the capsule).
@@ -234,7 +238,7 @@ const css = [
   // transition 里必须带 margin/left：rail 宽度在 36px↔280px 之间变化时，居中的
   // 按钮靠 margin 自动重算来跟随，加过渡后才是「滑过去」而不是「闪过去」
   // （用户明确提出的观感问题）。
-  '.crl_favToggle{position:sticky;top:0;z-index:3;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:24px;margin:0 0 4px;padding:0;border:none;border-radius:12px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.94));color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease,margin .25s cubic-bezier(.4,0,.2,1),left .25s cubic-bezier(.4,0,.2,1)}',
+  '.crl_favToggle{flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:24px;margin:0 0 4px;padding:0;border:none;border-radius:12px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.94));color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease,margin .25s cubic-bezier(.4,0,.2,1),left .25s cubic-bezier(.4,0,.2,1)}',
   '.crl_favToggle:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.75)}',
   '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
   // 展开态：整行 header（宽度与胶囊内宽一致），底部分隔线把它和消息行分开。
@@ -278,6 +282,15 @@ const css = [
 const HIDE_OFFICIAL_CSS = 'nav[aria-label="轮次导航"],nav[aria-label="Turn navigation"]{display:none !important}'
 const HIDE_OFFICIAL_STYLE_ID = 'data-crl-hide-official'
 
+/**
+ * `data-plugin` 归属标记：DSH 的 client 模块系统只把**没有** `data-plugin` 的 `<style>`
+ * 认领给正在 materialize 的模块（`claimStyles`），而 HMR 重载时按
+ * `data-plugin === 模块 id` 逐字匹配删除。裸注入的 style 会被任意模块认领走，
+ * 随后随那个模块的一次重载被物理删除——元素还在、样式消失（悬浮球样式事故的机制）。
+ * 这里用一个独立于模块 id 的稳定值：既不进别人的账，也不随本模块的进出被清掉。
+ */
+const HIDE_OFFICIAL_PLUGIN_TAG = 'dsh-chat-rail-hide-official'
+
 /** 按设置同步「屏蔽官方 TurnNavigator」样式（showOfficial=true=官方模式：不屏蔽）。 */
 export function syncOfficialHide(showOfficial: boolean): void {
   const el = document.head.querySelector<HTMLStyleElement>(`style[${HIDE_OFFICIAL_STYLE_ID}]`)
@@ -288,6 +301,7 @@ export function syncOfficialHide(showOfficial: boolean): void {
   if (el === null) {
     const tag = document.createElement('style')
     tag.setAttribute(HIDE_OFFICIAL_STYLE_ID, '')
+    tag.setAttribute('data-plugin', HIDE_OFFICIAL_PLUGIN_TAG)
     tag.textContent = HIDE_OFFICIAL_CSS
     document.head.appendChild(tag)
   }
@@ -348,6 +362,7 @@ if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin
 const S = {
   nav: 'crl_nav',
   navShow: 'crl_show',
+  list: 'crl_list',
   item: 'crl_item',
   itemActive: 'crl_active',
   title: 'crl_title',
@@ -1418,7 +1433,8 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
   // collapsed state the item rect is only 36px wide, so a tip positioned
   // there would be wrong once the rail expands.
   const [tip, setTip] = useState<{ index: number; x: number; y: number } | null>(null)
-  const navRef = useRef<HTMLDivElement | null>(null)  // True only after the expand animation has fully settled; the width
+  const navRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)  // True only after the expand animation has fully settled; the width
   // transition takes ~250ms after `show` flips, and item rects are only
   // stable once it finishes. Tip positioning must wait for this.
   const expandedRef = useRef(false)
@@ -1676,7 +1692,8 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
   // session switch, where activeIndex is recomputed for the new session).
   useEffect(() => {
     if (activeIndex < 0) return
-    const el = navRef.current
+    // 滚动的是内层列表容器（rail 自身不滚动，header 不参与滚动）
+    const el = listRef.current
     if (el === null) return
     const item = el.querySelector<HTMLElement>(`[data-crl-index="${activeIndex}"]`)
     if (item === null) return
@@ -1824,7 +1841,9 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
           : null,
         jumping ? createElement('div', { className: S.loading, key: 'loading' },
           createElement('span', { className: S.loadingLabel }, t.loading)) : null,
-        ...items,
+        // 条目放进独立滚动容器：header（收藏开关）在流内、不再压在条目上
+        // （sticky header 会盖住滚到它下面的条目——用户截图反馈的「遮挡」）。
+        createElement('div', { ref: listRef, key: 'list', className: S.list }, ...items),
       ],
     }),
     // Full-content panel: anchored to the left of the hovered item. Images
