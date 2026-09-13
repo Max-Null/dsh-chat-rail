@@ -436,7 +436,10 @@ test('collectQaFromNodes 从独立 tool-call 节点收集 ask_user_question，�
   assert.equal(qa[0].key, 'call:c1')
   assert.equal(qa[0].anchor, 'call:c1')
   assert.equal(qa[0].seq, 30)
-  assert.equal(qa[0].text, '第一步')
+  // 预览文本取 `question`（正文），**不是** `header`（短标签）。
+  // 用户 2026-09-14 反馈：导航条显示成 header 的「范围确认」，而不是问题本身
+  // 「TypeError 已修复。是否继续修……」，要求改回问题正文。
+  assert.equal(qa[0].text, '要做什么？')
 })
 
 test('完成后形态（root.call 携带 name/argsRaw）同样能收集', () => {

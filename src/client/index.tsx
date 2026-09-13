@@ -99,7 +99,10 @@ function relativeTime(ts: number, s: Record<string, string>): string {
 // right 跟随 --dsh-sidebar-width、top 跟随 --dsh-sidebar-height，与 better-sidebar
 // 面板共享同一 CSS 变量 + transition，动画同步。
 const css = [
-  '.crl_nav{user-select:none;z-index:100;position:fixed;right:calc(var(--dsh-sidebar-width,0px) + 3px);top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:10px 0;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:none;transition:width .25s cubic-bezier(.4,0,.2,1),right var(--ds-transition-duration-slow,0.3s) var(--ds-ease-in-out,ease-in-out),top var(--ds-transition-duration-slow,0.3s) var(--ds-ease-in-out,ease-in-out),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
+  // 展开/收起用 ease-in-out 且两侧对称时长，减少「抖一下」（原来 width 用
+  // cubic-bezier(.4,0,.2,1)、right/top 用 var(--ds-transition-duration-slow)，
+  // 两条曲线不同步，中间过程会互相追）。
+  '.crl_nav{user-select:none;z-index:100;position:fixed;right:calc(var(--dsh-sidebar-width,0px) + 3px);top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:10px 0;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:none;transition:width .25s cubic-bezier(.4,0,.2,1),right .25s cubic-bezier(.4,0,.2,1),top .25s cubic-bezier(.4,0,.2,1),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
   'body[data-ds-dark-theme] .crl_nav,[data-theme=\'dark\'] .crl_nav,.dark .crl_nav{background:rgba(28,28,32,.6);border-color:rgba(255,255,255,.09)}',
   '.crl_nav.crl_show{width:280px;overflow-y:auto;align-items:stretch;background:rgba(255,255,255,.94);border-color:rgba(0,0,0,.08);box-shadow:0 10px 30px rgba(0,0,0,.10),0 2px 8px rgba(0,0,0,.05)}',
   'body[data-ds-dark-theme] .crl_nav.crl_show,[data-theme=\'dark\'] .crl_nav.crl_show,.dark .crl_nav.crl_show{background:rgba(28,28,32,.96);border-color:rgba(255,255,255,.09);box-shadow:0 10px 30px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.28)}',
@@ -121,8 +124,12 @@ const css = [
   // 18px indicator in the 36px capsule; the expanded padding (0 14px) clears
   // the text. Padding transitions with the same timing as the width, so the
   // indicator glides smoothly instead of snapping when text hides/shows.
-  '.crl_item{cursor:pointer;flex-shrink:0;height:32px;min-height:32px;display:flex;justify-content:flex-end;align-items:center;width:100%;box-sizing:border-box;padding:0 9px;line-height:20px;background:none;border:none;font:inherit;text-align:left;color:rgba(0,0,0,.68);transition:padding .25s cubic-bezier(.4,0,.2,1),color .15s ease}',
-  '.crl_show .crl_item{padding:0 14px}',
+  // 折叠态**居中**：指示线（宽 10px）与上方星标按钮（宽 26px）都以容器中线为轴，
+  // 二者中心同在一列。此前是 flex-end，指示线被推到右边（中心≈22px）而星标居中
+  // （18px），用户截图指出的「星和导航条没对齐」即此。
+  '.crl_item{cursor:pointer;flex-shrink:0;height:32px;min-height:32px;display:flex;justify-content:center;align-items:center;width:100%;box-sizing:border-box;padding:0 9px;line-height:20px;background:none;border:none;font:inherit;text-align:left;color:rgba(0,0,0,.68);transition:padding .25s cubic-bezier(.4,0,.2,1),color .15s ease}',
+  // 展开态回到 flex-end：此时要的是「#序号 标题 时间 [指示线]」右端对齐，居中会让文字行变得难读。
+  '.crl_show .crl_item{justify-content:flex-end;padding:0 14px}',
   '.crl_item:hover{color:rgba(0,0,0,.95)}',
   '.crl_item.crl_active{color:var(--dsw-alias-state-business-primary,#4d6bfe)}',
   'body[data-ds-dark-theme] .crl_item,[data-theme=\'dark\'] .crl_item,.dark .crl_item{color:rgba(255,255,255,.68)}',
@@ -212,17 +219,16 @@ const css = [
   // 正确解法：`top:0` 与胶囊内边缘齐平，并给按钮**自己的不透明底色**——滚动行
   // 从容器 padding 缝隙经过时被底色挡住，而不是靠把控件挪出容器。展开态再补一条
   // 底部分隔线，读起来就是 panel header。
-  // 折叠态：靠右对齐，使星的中心与指示线中心重合。
-  // rail 宽 36px，`.crl_item` 是 `justify-content:flex-end` + `padding:0 9px`，
-  // 指示线宽 10px → 其中心距容器左边 22px。而 `.crl_nav` 为 `align-items:center`，
-  // 26px 宽的星若居中则中心在 18px —— 差 4px，就是截图里那点没对齐。
-  // 用 align-self:flex-end + margin-right 把两者的**中心**对到同一竖线上。
-  // 取 4px 是实测最优（CDP 量出 star/line 中心差 1px；3px 反而差 2px——
-  // 该按钮 background:inherit + align-self 的交互不是线性，别按算术推）。
-  '.crl_favToggle{position:sticky;top:0;z-index:3;flex-shrink:0;align-self:flex-end;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:24px;margin:0 4px 4px 0;padding:0;border:none;border-radius:12px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.94));color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease}',
+  // 折叠态：**居中**，与下方已居中的指示线同轴（此前 align-self:flex-end 是为了
+  // 迁就 flex-end 的指示线；指示线改居中后，这里也回居中）。
+  // transition 里必须带 margin/left：rail 宽度在 36px↔280px 之间变化时，居中的
+  // 按钮靠 margin 自动重算来跟随，加过渡后才是「滑过去」而不是「闪过去」
+  // （用户明确提出的观感问题）。
+  '.crl_favToggle{position:sticky;top:0;z-index:3;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:24px;margin:0 0 4px;padding:0;border:none;border-radius:12px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.94));color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease,margin .25s cubic-bezier(.4,0,.2,1),left .25s cubic-bezier(.4,0,.2,1)}',
   '.crl_favToggle:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.75)}',
   '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
-  // 展开态：整行 header（宽度与胶囊内宽一致），底部分隔线把它和消息行分开
+  // 展开态：整行 header（宽度与胶囊内宽一致），底部分隔线把它和消息行分开。
+  // 折叠/展开都用「居中 + 对称边距」，这样宽度变化时位置连续、不跳变。
   '.crl_show .crl_favToggle{width:calc(100% - 12px);height:26px;margin:0 6px 6px;padding:0 10px;border-radius:12px;justify-content:flex-start;text-align:left;border-bottom:1px solid rgba(0,0,0,.07)}',
   '.crl_favToggleLabel{display:none}',
   '.crl_show .crl_favToggleLabel{display:inline-block;min-width:0;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}',
@@ -953,9 +959,9 @@ function questionsTextOf(argsRaw: unknown): string {
   for (const q of list) {
     if (q === null || typeof q !== 'object') continue
     const o = q as { header?: unknown, question?: unknown }
-    const text = typeof o.header === 'string' && o.header !== ''
-      ? o.header
-      : typeof o.question === 'string' ? o.question : ''
+    const text = typeof o.question === 'string' && o.question !== ''
+      ? o.question
+      : typeof o.header === 'string' ? o.header : ''
     if (text !== '') parts.push(text)
   }
   return parts.join(' / ').trim().slice(0, 80)
