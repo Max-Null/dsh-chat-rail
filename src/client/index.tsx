@@ -238,7 +238,10 @@ const css = [
   // transition 里必须带 margin/left：rail 宽度在 36px↔280px 之间变化时，居中的
   // 按钮靠 margin 自动重算来跟随，加过渡后才是「滑过去」而不是「闪过去」
   // （用户明确提出的观感问题）。
-  '.crl_favToggle{flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:26px;height:24px;margin:0 0 4px;padding:0;border:none;border-radius:12px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.94));color:rgba(0,0,0,.4);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease,margin .25s cubic-bezier(.4,0,.2,1),left .25s cubic-bezier(.4,0,.2,1)}',
+  // 折叠态与展开态同构：收藏开关都是面板的 header（通栏 + 底部分界线），命令式地
+  // 去掉原先那块白色圆角底——它在半透明胶囊里是一块突兀的白斑，与展开态的通栏
+  // 标题栏不是一套语言。折叠态保留顶部 10px 内边距，避开胶囊的半圆头。
+  '.crl_favToggle{flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;width:34px;height:26px;margin:0 0 6px;padding:0;border:none;border-radius:0;background:transparent;border-bottom:1px solid rgba(0,0,0,.07);color:rgba(0,0,0,.42);cursor:pointer;font-size:11px;line-height:1;white-space:nowrap;transition:background .15s ease,color .15s ease,margin .25s cubic-bezier(.4,0,.2,1),left .25s cubic-bezier(.4,0,.2,1)}',
   '.crl_favToggle:hover{background:rgba(0,0,0,.07);color:rgba(0,0,0,.75)}',
   '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
   // 展开态：整行 header（宽度与胶囊内宽一致），底部分隔线把它和消息行分开。
@@ -248,7 +251,7 @@ const css = [
   '.crl_show .crl_favToggle{width:100%;height:28px;margin:0 0 6px;padding:0 12px;border-radius:0;justify-content:flex-start;text-align:left;border-bottom:1px solid rgba(0,0,0,.07)}',
   '.crl_favToggleLabel{display:none}',
   '.crl_show .crl_favToggleLabel{display:inline-block;min-width:0;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}',
-  'body[data-ds-dark-theme] .crl_favToggle,[data-theme=\'dark\'] .crl_favToggle,.dark .crl_favToggle{color:rgba(255,255,255,.4);background:var(--dsw-alias-bg-layer-2,rgba(30,32,38,.94))}',
+  'body[data-ds-dark-theme] .crl_favToggle,[data-theme=\'dark\'] .crl_favToggle,.dark .crl_favToggle{color:rgba(255,255,255,.4);border-bottom-color:rgba(255,255,255,.1)}',
   'body[data-ds-dark-theme] .crl_favToggle:hover,[data-theme=\'dark\'] .crl_favToggle:hover,.dark .crl_favToggle:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.85)}',
   'body[data-ds-dark-theme] .crl_show .crl_favToggle,[data-theme=\'dark\'] .crl_show .crl_favToggle,.dark .crl_show .crl_favToggle{border-bottom-color:rgba(255,255,255,.1)}',
   // 空间不足（会话区被右侧边栏遮到没有参考价值）时整体退场。
@@ -306,6 +309,9 @@ export function syncOfficialHide(showOfficial: boolean): void {
     tag.setAttribute('data-plugin', HIDE_OFFICIAL_PLUGIN_TAG)
     tag.textContent = HIDE_OFFICIAL_CSS
     document.head.appendChild(tag)
+  } else if (el.textContent !== HIDE_OFFICIAL_CSS) {
+    // 同主样式：内容比对，避免 HMR 重载后旧内容占住标签
+    el.textContent = HIDE_OFFICIAL_CSS
   }
 }
 
@@ -353,12 +359,19 @@ export function bindRailSettingsScope(scope: unknown): void {
 const NOOP_SUB = (() => () => {}) as () => () => void
 
 const STYLE_ID = '@max-null/dsh-chat-rail/styles.module.css'
-if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin-css="${STYLE_ID}"]`) === null) {
-  const tag = document.createElement('style')
-  tag.dataset.plugin = 'dsh-chat-rail'
-  tag.dataset.pluginCss = STYLE_ID
-  tag.textContent = css
-  document.head.appendChild(tag)
+// 内容比对而非「已存在就跳过」：HMR 重载会重新执行本模块，若沿用旧标签，旧 CSS 会
+// 一直占住这个 id，改动看着像"HMR 生效了"却仍是旧规则（实测：只能重启内核才看到）。
+if (typeof document !== 'undefined') {
+  const existing = document.head.querySelector<HTMLStyleElement>(`style[data-plugin-css="${STYLE_ID}"]`)
+  if (existing === null) {
+    const tag = document.createElement('style')
+    tag.dataset.plugin = 'dsh-chat-rail'
+    tag.dataset.pluginCss = STYLE_ID
+    tag.textContent = css
+    document.head.appendChild(tag)
+  } else if (existing.textContent !== css) {
+    existing.textContent = css
+  }
 }
 
 const S = {
