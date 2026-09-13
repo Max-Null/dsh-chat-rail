@@ -106,7 +106,7 @@ const css = [
   // 列表容器：rail 自身不再滚动，滚动只发生在这一层，header 因此永远不覆盖条目。
   '.crl_list{display:flex;flex-direction:column;align-items:center;width:100%;min-height:0;flex:1 1 auto;position:relative;overflow-y:hidden;overflow-x:hidden;scrollbar-width:none}',
   'body[data-ds-dark-theme] .crl_nav,[data-theme=\'dark\'] .crl_nav,.dark .crl_nav{background:rgba(28,28,32,.6);border-color:rgba(255,255,255,.09)}',
-  '.crl_nav.crl_show{width:280px;align-items:stretch;background:rgba(255,255,255,.94);border-color:rgba(0,0,0,.08);box-shadow:0 10px 30px rgba(0,0,0,.10),0 2px 8px rgba(0,0,0,.05)}',
+  '.crl_nav.crl_show{width:280px;align-items:stretch;padding-top:0;background:rgba(255,255,255,.94);border-color:rgba(0,0,0,.08);box-shadow:0 10px 30px rgba(0,0,0,.10),0 2px 8px rgba(0,0,0,.05)}',
   'body[data-ds-dark-theme] .crl_nav.crl_show,[data-theme=\'dark\'] .crl_nav.crl_show,.dark .crl_nav.crl_show{background:rgba(28,28,32,.96);border-color:rgba(255,255,255,.09);box-shadow:0 10px 30px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.28)}',
   // Scrollbar hidden by design: the capsule is small and the marks read as a
   // free-floating sequence — a bar that appears and disappears with the busy
@@ -243,7 +243,9 @@ const css = [
   '.crl_favToggle.crl_on{color:#ffd166;background:rgba(255,209,102,.14)}',
   // 展开态：整行 header（宽度与胶囊内宽一致），底部分隔线把它和消息行分开。
   // 折叠/展开都用「居中 + 对称边距」，这样宽度变化时位置连续、不跳变。
-  '.crl_show .crl_favToggle{width:calc(100% - 12px);height:26px;margin:0 6px 6px;padding:0 10px;border-radius:12px;justify-content:flex-start;text-align:left;border-bottom:1px solid rgba(0,0,0,.07)}',
+  // 展开态：收藏开关作为通栏标题栏贴到面板顶部——上方不再留内边距与自成的边框，
+  // 分界由它自己的底边框承担；顶部两角交给 rail 的圆角裁切。
+  '.crl_show .crl_favToggle{width:100%;height:28px;margin:0 0 6px;padding:0 12px;border-radius:0;justify-content:flex-start;text-align:left;border-bottom:1px solid rgba(0,0,0,.07)}',
   '.crl_favToggleLabel{display:none}',
   '.crl_show .crl_favToggleLabel{display:inline-block;min-width:0;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}',
   'body[data-ds-dark-theme] .crl_favToggle,[data-theme=\'dark\'] .crl_favToggle,.dark .crl_favToggle{color:rgba(255,255,255,.4);background:var(--dsw-alias-bg-layer-2,rgba(30,32,38,.94))}',
