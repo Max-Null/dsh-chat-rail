@@ -15,8 +15,10 @@ import {
   collectFromNodes,
   collectQaFromNodes,
   jumpToMessage,
+  qaWithinMessage,
   railMessageOfNode,
 } from '../src/client/index.tsx'
+import type { RailMessage } from '../src/client/index.tsx'
 
 /** One raw chat node shaped like the official ChatConversationViewNode. */
 function userNode(key: string, seq: number, text: string) {
@@ -477,4 +479,46 @@ test('collectFromNodes 不含问答条目（两条通路互不重叠，故可安
   assert.equal(users.length, 1)
   assert.equal(users[0].key, '13:input-messageu1')
   assert.equal(users.some((m) => m.qa === true), false)
+})
+
+// ── 问答归属：只归给「前面最近的那条消息」─────────────────────────────
+// 用户 2026-09-14 报告：同一提问出现在它之前**所有**消息的 tip 里。
+// 根因是判据写成 `qa.seq >= m.seq`——对每一条更早的消息都成立。
+
+/** 参与归属判定的最小消息（只用到 seq）。 */
+function railUser(anchor: string, seq: number): RailMessage {
+  return { seq, time: 0, text: anchor, hasImage: false, key: anchor, anchor }
+}
+
+/** 参与归属判定的最小问答条目。 */
+function railQa(anchor: string, seq: number): RailMessage {
+  return { seq, time: 0, text: anchor, hasImage: false, key: anchor, anchor, qa: true }
+}
+
+test('qaWithinMessage：只归给前面最近的那条消息，不再落进所有更早消息', () => {
+  const messages = [railUser('m1', 100), railUser('m2', 200), railUser('m3', 300)]
+  const qa = [railQa('q1', 150), railQa('q2', 250)]
+  assert.deepEqual(qaWithinMessage(qa, messages, 0).map((m) => m.anchor), ['q1'])
+  assert.deepEqual(qaWithinMessage(qa, messages, 1).map((m) => m.anchor), ['q2'])
+  assert.deepEqual(qaWithinMessage(qa, messages, 2).map((m) => m.anchor), [])
+})
+
+test('qaWithinMessage：最后一条消息无上界，收下其后的全部问答', () => {
+  const messages = [railUser('m1', 100), railUser('m2', 200)]
+  const qa = [railQa('q1', 250), railQa('q2', 260)]
+  assert.deepEqual(qaWithinMessage(qa, messages, 1).map((m) => m.anchor), ['q1', 'q2'])
+})
+
+test('qaWithinMessage：区间上界取开区间——恰在下一条消息 seq 上的问答归下一条', () => {
+  const messages = [railUser('m1', 100), railUser('m2', 200)]
+  const qa = [railQa('boundary', 200)]
+  assert.deepEqual(qaWithinMessage(qa, messages, 0), [])
+  assert.deepEqual(qaWithinMessage(qa, messages, 1).map((m) => m.anchor), ['boundary'])
+})
+
+test('qaWithinMessage：问答早于本条消息时为空；下标越界时为空', () => {
+  const messages = [railUser('m1', 100)]
+  const qa = [railQa('q1', 50)]
+  assert.deepEqual(qaWithinMessage(qa, messages, 0), [])
+  assert.deepEqual(qaWithinMessage(qa, messages, 5), [])
 })

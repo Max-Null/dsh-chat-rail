@@ -682,7 +682,7 @@ interface RailImage {
   height: number
 }
 
-interface RailMessage {
+export interface RailMessage {
   seq: number
   time: number
   text: string
@@ -990,6 +990,31 @@ export function collectQaFromNodes(snapshot: unknown): RailMessage[] {
   }
   out.sort((a, b) => a.seq - b.seq)
   return out
+}
+
+/**
+ * 属于第 `index` 条消息区间的问答——**只归给它前面最近的那条用户消息**。
+ *
+ * 区间取 `[本条 seq, 下一条消息的 seq)`，最后一条消息无上界。
+ * 判据不能只写 `qa.seq >= m.seq`：那会让同一条提问落进**所有更早消息**的 tip
+ * （2026-09-14 用户报告的归属 bug）。依据是「提问一定在某条消息的回答中」——
+ * 它必然夹在两条用户消息之间，因此上界就是下一条消息。
+ *
+ * @param qaMessages - 已按 seq 升序的问答条目（collectQaFromNodes 的产出）。
+ * @param messages - 完整的用户消息列表（**不是**收藏过滤后的列表：区间按消息序列划分）。
+ * @param index - 目标消息在 `messages` 中的下标。
+ * @returns 落在该区间内的问答条目（保持输入顺序）。
+ */
+export function qaWithinMessage(
+  qaMessages: readonly RailMessage[],
+  messages: readonly RailMessage[],
+  index: number,
+): RailMessage[] {
+  const self = messages[index]
+  if (self === undefined) return []
+  const next = messages[index + 1]
+  const upper = next === undefined ? undefined : next.seq
+  return qaMessages.filter((q) => q.seq >= self.seq && (upper === undefined || q.seq < upper))
 }
 
 /** 问答条目的预览文本：取 `arguments` JSON 里的问题标题（多问用 ` / ` 连）。 */
@@ -1900,12 +1925,9 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
             children.push(createElement('span', { className: S.tipBadge, key: 'badge' }, t.hasImage))
           }
           children.push(createElement('span', { key: 'text' }, fullTextOf(m, nodeSnapshot) || t.noText))
-          // 该消息之后、下一条消息之前的问答（「提问一定在某条消息的回答中」，用户语）。
-          // 从后往前收：问答的 seq ≥ 本消息 seq 即属于本消息区间。
-          const qaForTip: RailMessage[] = []
-          for (let qi = qaMessages.length - 1; qi >= 0; qi--) {
-            if (qaMessages[qi].seq >= m.seq) qaForTip.unshift(qaMessages[qi])
-          }
+          // 只收「本条消息之后、下一条消息之前」的问答——归给前面最近的那条消息。
+          // 区间用完整 messages（而非收藏过滤后的列表）划分：归属由消息序列决定。
+          const qaForTip = qaWithinMessage(qaMessages, messages, tipIndex)
           if (qaForTip.length > 0) {
             children.push(createElement('div', { className: S.tipQaWrap, key: 'qa' },
               qaForTip.map((q) => createElement('button', {
