@@ -20,3 +20,11 @@
 - `npm pack --dry-run`：**9 文件 / 113.1 kB**；`rail-ssid-dev-*` 全部排除，
   `rail-fav-1.png` / `rail-fav-2.png` / `lib/*` / `cordis.patch.yml` / `README.md` 均在包内 ✅
 - `pnpm typecheck` ✅ · `pnpm test` **50/50** ✅（本次不改运行时代码，回归确认）
+
+## 后续清理（同日）
+
+- 上述三张验证截图随后**从仓库删除**：`docs/shots/` 回归「只放 README 引用的发布资产」。
+  它们见证的修复链以 `docs/verification/验证记录-2026-09-07-chat-rail修复链L2.md` 的文字留痕为准——
+  图是 0.6.1 时代的旧 UI，留在发布资产目录里既占体积、又容易与当前形态混淆。
+- `files` 的否定模式**保留**：`docs/shots` 整目录入包的前提下，它阻止将来同类图放回该目录时误入分发包。
+- 该清理不改变分发包内容（图本就被排除），故不另起版本。
