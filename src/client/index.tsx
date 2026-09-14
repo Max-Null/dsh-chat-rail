@@ -113,6 +113,21 @@ const css = [
   // row (and with overflow peaks) flickers worse than no bar at all. Scrolling
   // still works (overflow-y stays auto when expanded).
   '.crl_nav::-webkit-scrollbar,.crl_list::-webkit-scrollbar{width:0;height:0}',
+  // 会话区 Y 轴滚动条：官方内核 0.1.5 起把 bar 从「紧贴内容边缘」改为「离边缘 2px」
+  // （`ConversationRoot.module.css` 的 `margin-right: 2px` + track 内缩），于是一条
+  // 独立细条落在导航条旁边——与导航条的位置指示功能重复，视觉上是噪声，由本插件
+  // 统一隐藏（滚轮/触控板滚动不受影响）。
+  //
+  // 做法是**把 thumb 画成透明**，而不是把滚动条宽度压成 0：宽度归零会连带回收
+  // `scrollbar-gutter: stable` 的 8px 槽位，内容区因此变宽、输入卡横移，而官方
+  // 无条件保留槽位正是为了跨视图时输入卡不位移（`ConversationRoot.module.css` 的
+  // gutter 注释 + `2026-08-04-composer-tab-gutter-reservation`）。track 官方本来就
+  // 透明，所以只需这一条；thumb:hover 一并列出，避免特异性与注入顺序决定 hover 态。
+  //
+  // 两条边界：① **不写 `scrollbar-width`** —— ui-theme/scrollbar.css 注释记录了实测，
+  // 非 auto 的 `scrollbar-width` 会让 Chromium 丢弃该元素的全部 `::-webkit-scrollbar*`
+  // 规则；② 用官方契约锚点 `[data-conversation-scroll]`，不依赖 CSS module hash。
+  '[data-conversation-scroll]::-webkit-scrollbar-thumb,[data-conversation-scroll]::-webkit-scrollbar-thumb:hover{background:transparent}',
   // 列表独立滚动：header（收藏开关）留在流内、不覆盖列表内容。
   '.crl_show .crl_list{overflow-y:auto;align-items:stretch}',
   // Jump-in-progress indicator: sticky row pinned at the rail top. The spinner

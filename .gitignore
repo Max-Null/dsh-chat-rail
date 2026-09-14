@@ -22,3 +22,6 @@ tests/verify-*.ts
 
 # 原始截图（docs/shots/ 有规范副本）
 ScreenShot/
+
+# 浏览器录制/截图脚本与原始产物（skill: ssid-record-browser-gif）
+.playwright-mcp/
