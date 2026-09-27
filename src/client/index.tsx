@@ -1114,6 +1114,12 @@ function tipImagesOf(m: RailMessage, nodeSnapshot: unknown): ImageSpec[] {
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
+/** Resolve on the next animation frame, or immediately where rAF is absent. */
+const nextFrame = (): Promise<void> => new Promise<void>((resolve) => {
+  if (typeof requestAnimationFrame !== 'function') { resolve(); return }
+  requestAnimationFrame(() => { resolve() })
+})
+
 /**
  * Ensure the message node is loaded into the visible window, then scroll to it.
  *
@@ -1148,8 +1154,8 @@ async function jumpToMessage(
   targetSeq?: number,
   /** Jump-phase signal: `'paging'` when history is actually being loaded in
    *  (the rail's busy indicator), `'landed'` once the target row is located
-   *  and scrolling is about to run (indicator goes away even while the smooth
-   *  scroll settles — a near mark must never flash "loading"). */
+   *  and the landing is about to run (indicator goes away before the single
+   *  re-verify — a near mark must never flash "loading"). */
   onJump?: (phase: 'paging' | 'landed') => void,
 ): Promise<boolean> {
   const session = sessionsService.binding(sessionId)?.session
@@ -1236,18 +1242,17 @@ async function jumpToMessage(
     await delay(50)
   }
   if (row === null) return false
-  // Row located: scrolling is the visible feedback — drop the busy indicator
-  // here even though the smooth scroll (and its re-verify steps) still run.
+  // Row located: the landing is the visible feedback — drop the busy indicator
+  // here even though the single re-verify step still runs.
   onJump?.('landed')
-  const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
   // DSH 0.1.2-alpha.3+ paging compensates the reader position while the newly
-  // prepended window re-flows — a scrollIntoView issued right after a multi-
-  // page loadThrough lands mid-flight and gets overridden by the compensation
-  // (verified on the alpha.4 kernel: 145971 → 44464 snap-back). Wait for the
-  // scrollport geometry to go quiet, land with an explicit scrollTo computed
-  // from the row's viewport rect, then re-verify a few times: a stray
-  // bottom-follow can still pull the flight back.
-  const scrollToRow = (instant = false): void => {
+  // prepended window re-flows — a scroll issued right after a multi-page
+  // loadThrough lands mid-flight and gets overridden by the compensation
+  // (verified on the alpha.4 kernel: 145971 → 44464 snap-back). Landing waits
+  // one frame for the prepended layout to settle (the official jump schedules
+  // its reconcile on requestAnimationFrame the same way), then re-verifies once:
+  // a stray bottom-follow can still pull the landing back.
+  const scrollToRow = (): void => {
     const viewRect = scrollport.getBoundingClientRect()
     const rowRect = (row as Element).getBoundingClientRect()
     // Clamp at the top edge instead of bailing out: the FIRST message's row
@@ -1258,38 +1263,23 @@ async function jumpToMessage(
       0,
       scrollport.scrollTop + (rowRect.top - viewRect.top) - (viewRect.height - rowRect.height) / 2,
     )
-    // `instant`（instant 或 reduced-motion）走 auto：平滑滚动在窗口失焦时可能
-    // 完全不推进，复核阶段因此改用即时滚动兜底。
-    scrollport.scrollTo({ top: target, behavior: instant || reducedMotion ? 'auto' : 'smooth' })
+    // 瞬时定位，与官方 TurnNavigator 一致：`use-chat-viewport.ts` 的 `write()`
+    // 就是直接赋 `scroller.scrollTop`。平滑滚动在长跨度下要跨越整段已加载窗口，
+    // 窗口失焦时还可能完全不推进——反而比瞬时更不可靠。
+    scrollport.scrollTop = target
   }
   const rowDelta = (): number => {
     const viewRect = scrollport.getBoundingClientRect()
     const rowRect = (row as Element).getBoundingClientRect()
     return Math.abs((rowRect.top + rowRect.height / 2) - (viewRect.top + viewRect.height / 2))
   }
-  let stableTop = -1
-  let stableHeight = -1
-  let stability = 0
-  let quiet = 0
-  while (quiet++ < 30) {
-    if (signal?.aborted) return false
-    const top = scrollport.scrollTop
-    const height = scrollport.scrollHeight
-    if (top === stableTop && height === stableHeight) stability++
-    else { stableTop = top; stableHeight = height; stability = 0 }
-    if (stability >= 3) break
-    await delay(150)
-  }
+  await nextFrame()
   if (signal?.aborted) return false
   scrollToRow()
-  for (let attempt = 0; attempt < 4; attempt++) {
-    await delay(600)
-    if (signal?.aborted) return false
-    if (rowDelta() <= Math.max(120, scrollport.getBoundingClientRect().height * 0.2)) break
-    // 复核未对齐时改用即时滚动：平滑滚动在失焦/无头窗口下可能不推进，
-    // 且分页后的滚动补偿会把它拉回，于是整次跳转看不出任何位移。
-    scrollToRow(true)
-  }
+  await delay(600)
+  if (signal?.aborted) return false
+  // 单次复核：分页补偿若仍在进行，会把刚落的位置拉回去（见上）。
+  if (rowDelta() > Math.max(120, scrollport.getBoundingClientRect().height * 0.2)) scrollToRow()
   return true
 }
 
@@ -1829,8 +1819,8 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
           m.seq,
           // Busy indicator only while history is actually paging in; a near
           // mark (already loaded) never flashes "loading", and the indicator
-          // drops as soon as the target row is located — before the smooth
-          // scroll settles, which is the visible feedback itself.
+          // drops as soon as the target row is located — the landing itself is
+          // the visible feedback.
           (phase) => setJumping(phase === 'paging'),
         ).finally(() => setJumping(false))
       },
