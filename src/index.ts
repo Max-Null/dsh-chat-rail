@@ -15,19 +15,31 @@
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-settings'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 
 export const name = 'chat-rail'
 const PROJECTION_KEY = 'chatRail'
 
-/** 设置 namespace（与 client 的 settingsScope.bind 一致；设置——插件页卡片锚点）。 */
+/** 设置 namespace（0.1.7 起即本插件的 entry id；`ConfigForms.get` 按它取表单）。 */
 export const CHAT_RAIL_NS = 'chat-rail'
 
-/** 可配置项：「使用官方轮次导航条」（对比模式，默认关=chat-rail 主导隐藏官方）。 */
-export const Config: z<{ showOfficialNavigator: boolean }> = z.object({
-  showOfficialNavigator: z.boolean().default(false),
+/**
+ * 可配置项：「使用官方轮次导航条」（对比模式，默认关=chat-rail 主导隐藏官方）。
+ *
+ * 0.1.7：插件的 Config schema 本身就构成它的 settings section（不再有
+ * `installSection`），可变字段用 `Volatile<T>` + `.volatile()` 声明。标了 volatile
+ * 才能被写入——`settings/src/schema.ts` 的 `isVolatilePath` 只承认「祖先标了
+ * volatile」的路径，非 volatile 路径在 `settings/src/index.ts:406` 直接抛错。
+ */
+export interface Config {
+  showOfficialNavigator: Volatile<boolean>
+}
+
+// 不写 `z<Config>` 显式泛型：`.volatile()` 把 schema 的 Mode 变成 'volatile-defined'，
+// 与接口里的 `Volatile<T>` 不同，显式标注会报 TS2322（见 node-appearance 同款改法）。
+export const Config = z.object({
+  showOfficialNavigator: z.boolean().default(false).volatile(),
 })
 
 /** Cap preview text so projection payloads stay small (80 chars ≈ 1-2 lines). */
@@ -206,21 +218,17 @@ const favoritesRouteDefinition = {
   },
 }
 
-function apply(ctx: Context, config: { showOfficialNavigator: boolean }): void {
+function apply(ctx: Context, _config: Config): void {
   ctx.inject(['sessionProjections'] as never, ((projectionCtx: { sessionProjections: { register: (d: unknown) => void } }) => {
     projectionCtx.sessionProjections.register(messageIndexProjectionDefinition)
   }) as never)
   ctx.inject(['webServer'] as never, ((wsCtx: { webServer: { register: (d: unknown) => void } }) => {
     wsCtx.webServer.register(favoritesRouteDefinition)
   }) as never)
-  // 设置（设置——插件页）：alpha.2 姿势——settings 服务注入 → installSection 声明 namespace
-  // （官方范例 web-search-deepseek / node-appearance 同款）；client 用 settingsScope 消费。
-  ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.installSection(ctx, CHAT_RAIL_NS, Config, config as never, {
-      setSource: () => {},
-      onChange: () => {},
-    })
-  })
+  // 设置 section 不再由此处安装：0.1.7 的 Settings 服务公开面只有 configure /
+  // describe / update / replace / mutate（`settings/src/index.ts`），`installSection`
+  // 已不存在。section 由 loader 依据本模块导出的 `Config` schema 自动构成，namespace
+  // 即 entry id（`chat-rail`）。浏览器半经 `ctx.configForms.get(NS)` 读写同一份。
 }
 
 export { apply }

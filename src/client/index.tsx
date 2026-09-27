@@ -24,12 +24,27 @@
 
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'
+// 0.1.7：`@deepseek-ai/dsh-client-runtime` 已被移除（`packages/client` 下再无 runtime
+// 目录，npm 上停更于 0.1.1-rc.2）。三种类型各归其位——这也是官方 client 包的统一写法
+// （`ui-conversation`、`ui-commands`、`ui-session` 等 163 处均如此）：
+//   · ClientContext → cordis 的 Context 别名
+//   · SessionId     → dsh-session/types（`SessionId = Branded<'SessionId'>`）
+//   · ISessions     → dsh-api-session-controller/client（契约在 client/contract/sessions.ts）
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the input.dock entry).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+// Type-only：Context / SlotMap 增强声明。把 ClientContext 还原成裸 `Context` 之后，
+// `ctx.slots`、`ctx.configForms` 以及 `plugins.bundle.config` 的 SlotMap 条目都要靠
+// 这些包的 declare module 才能存在（它们不产生运行时代码）。
+// `ctx.slots` 的合并来自 **renderer 包**（slot 注册表的属主），不是 ui-slots——
+// 后者是 shell 预加载的静态库，没有可安装的 `./client` 入口。
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 
-export const inject = ['slots', 'sessions', 'conversation', 'settingsScope']
+export const inject = ['slots', 'sessions', 'conversation', 'configForms']
 
 // ---- i18n (DSH locale-aware, zh/en) ----
 type LocaleId = 'zh' | 'en'
@@ -349,25 +364,25 @@ export function clearRowActions(): void {
 }
 
 // 「使用官方轮次导航条」设置（2026-09-05 对比模式）：与 node-appearance 同构——官方
-// settingsScope（设置——插件页的「可配置插件」卡片，keyed by namespace 'chat-rail'）。
+// 配置表单（0.1.7 起以 `ctx.configForms.get(entryId)` 取代 settingsScope 服务）。
 type RailSettings = { showOfficialNavigator?: boolean }
-let railSettingsScope: (({
+let railSettingsForm: {
   getSnapshot(): { value?: RailSettings }
   subscribe(listener: () => void): () => void
-}) & {
   set(key: 'showOfficialNavigator', value: boolean): Promise<unknown>
-}) | null = null
+} | null = null
 
-/** client apply 时绑定（settingsScope 官方服务提供）。 */
-export function bindRailSettingsScope(scope: unknown): void {
-  if (typeof scope !== 'object' || scope === null) return
-  railSettingsScope = (scope as {
-    bind<T>(spec: { namespace: string }): {
-      getSnapshot(): { value?: T }
-      subscribe(listener: () => void): () => void
-      set(key: keyof T & string, value: T[keyof T & string]): Promise<unknown>
-    }
-  }).bind<RailSettings>({ namespace: 'chat-rail' }) as never
+/**
+ * client apply 时绑定（由 `ctx.configForms.get('chat-rail')` 取得）。
+ *
+ * 运行时面与旧的 `settingsScope.bind()` 同形：`ConfigForm<T>` 提供 `getSnapshot` /
+ * `subscribe` / `set(field, value)`（`ui-settings/src/client/config-form-types.ts:39`），
+ * 所以两处订阅与写入的调用点都不用改。模块级句柄是既有骨架，本次只换来源、不动结构。
+ * @param form - Host 侧 `configForms` 服务为 `chat-rail` 这个 entry 提供的表单。
+ */
+export function bindRailSettingsForm(form: unknown): void {
+  if (typeof form !== 'object' || form === null) return
+  railSettingsForm = form as typeof railSettingsForm
 }
 
 /** No-op subscribe for useSyncExternalStore when the scope is not yet bound. */
@@ -1412,8 +1427,8 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
   // 官方 TurnNavigator 显示 + 本 rail 隐藏 + 行内按钮清理。设置来自官方 settingsScope（设置——
   // 插件页卡片），切换即时生效；rail 与卡片订阅同一 scope。
   const railSettingsSnap = useSyncExternalStore(
-    railSettingsScope !== null ? (cb: () => void) => railSettingsScope!.subscribe(cb) : NOOP_SUB,
-    () => railSettingsScope?.getSnapshot() ?? { value: undefined },
+    railSettingsForm !== null ? (cb: () => void) => railSettingsForm!.subscribe(cb) : NOOP_SUB,
+    () => railSettingsForm?.getSnapshot() ?? { value: undefined },
   )
   const showOfficial = railSettingsSnap.value?.showOfficialNavigator === true
   const applyOfficialMode = (on: boolean): void => {
@@ -2029,15 +2044,19 @@ function apply(ctx: ClientContext): void {
       conversation: ctx.conversation as unknown as { createDraftImages(files: readonly File[]): readonly { id: string }[] },
     }),
   }, TimelineRail))
-  // 设置（设置——插件页）：与 node-appearance 同构——注册「可配置插件」卡片（keyed by namespace）。
-  ctx.inject(['settingsScope'], (scope) => {
-    bindRailSettingsScope((scope as unknown as { settingsScope: unknown }).settingsScope)
-  })
-  ctx.slots.inject(('settings.plugin.item') as never, () => ctx.slots.register({
-    name: 'settings.plugin.item',
-    key: 'chat-rail',
+  // 设置（Plugins 页）：0.1.7 的槽是 `plugins.bundle.config`，key 用**包名**。
+  // 判据（`ui-plugin-manager/src/client/config-ledger.ts`）：`plugins.bundle.config` 的
+  // key 直接取 `entry.options.key`，而 `plugins.row.config` 才用 `包名#行id`
+  // （`rowConfigKey`）；本插件 package.json 声明了 `dsh.bundle.patch`，自身即 bundle。
+  // 旧的 `settings.plugin.item` 在 0.1.7 client 包里只剩一条注释；替代者 `plugins.item`
+  // 按契约是官方插件专区（"OCCUPIED by the official settings pages"），第三方不该占。
+  const settingsForm = ctx.configForms.get<RailSettings>('chat-rail')
+  bindRailSettingsForm(settingsForm)
+  ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+    name: 'plugins.bundle.config',
+    key: '@max-null/dsh-chat-rail',
     inject: () => ({
-      setShowOfficialNavigator: (show: boolean) => railSettingsScope?.set('showOfficialNavigator', show),
+      setShowOfficialNavigator: (show: boolean) => railSettingsForm?.set('showOfficialNavigator', show),
       t: langStrings(),
     }),
   } as never, ChatRailSettingsRow))
@@ -2052,8 +2071,8 @@ export interface ChatRailSettingsRowFace {
 export function ChatRailSettingsRow({ setShowOfficialNavigator, t }: ChatRailSettingsRowFace): ReactNode {
   const [open, setOpen] = useState(false)
   const snap = useSyncExternalStore(
-    railSettingsScope !== null ? (cb: () => void) => railSettingsScope!.subscribe(cb) : NOOP_SUB,
-    () => railSettingsScope?.getSnapshot() ?? { value: undefined },
+    railSettingsForm !== null ? (cb: () => void) => railSettingsForm!.subscribe(cb) : NOOP_SUB,
+    () => railSettingsForm?.getSnapshot() ?? { value: undefined },
   )
   const on = snap.value?.showOfficialNavigator === true
   return createElement('li', { className: 'crlSetCard' + (open ? ' crlSetCardOpen' : '') },

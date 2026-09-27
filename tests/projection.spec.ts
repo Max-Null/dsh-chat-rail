@@ -154,5 +154,8 @@ test('view returns the accumulated state', () => {
 
 test('config schema accepts an empty value', () => {
   // zod Config（2026-09-06）：空值按默认值解析（showOfficialNavigator=false）。
-  assert.deepEqual(Config['~standard'].validate(undefined), { value: { showOfficialNavigator: false } })
+  // 0.1.7：字段标了 `.volatile()`，解析结果是 `Volatile<boolean>` 包装而非裸布尔，
+  // 读值要经 `.get()`（同 node-appearance 的 config.spec.ts）。
+  const result = Config['~standard'].validate(undefined) as { value: { showOfficialNavigator: { get(): boolean } } }
+  assert.equal(result.value.showOfficialNavigator.get(), false)
 })
