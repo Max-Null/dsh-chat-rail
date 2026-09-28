@@ -41,7 +41,7 @@ This plugin belongs to the **`@max-null/*` family** — a set of plugins that to
 - **无 better-sidebar 也能用**：变量缺失时走 CSS fallback（垂直居中 + 视口右缘），纯 DSH 环境开箱即用。
 - **与 DSH 自带轮次导航协同**：DSH `0.1.2-alpha.1+` 自带 TurnNavigator（轮次导航竖轨）。安装本插件后自动隐藏官方竖轨（aria-label 双文案锚点，不依赖构建 hash），由本插件统一承担会话导航；未安装本插件时官方导航照常显示。设置卡片另提供**「使用官方轮次导航条（对比模式）」**开关，可随时切回官方竖轨对比（免重启生效）。
 - **深历史跳转（DSH `0.1.2-alpha.3+` 内核）**：会话历史按窗口分页加载（`hasMore`）时，点击跳转走官方 `loadThrough(seq)` 精确跳转装载器（200 条/页一次到位），替代旧版逐页 `loadOlder`（50 条/页）循环；旧内核无 `loadThrough` 时自动回退逐页循环。
-- 需要 DSH ≥ `0.1.0-rc.6`；随 SSiD v0.3.0（内核 `0.1.5-rc.2`）完整适配验证。
+- **DSH 版本要求**：`>=0.1.7-rc.2 <0.3.0`，与 `peerDependencies` 一致。内核按 `semver.satisfies(运行时, 范围, { includePrerelease: true })` 逐个校验 `@deepseek-ai/dsh-*` peer——预发布版参与比较，caret 写法 `^0.1.7-rc.2` 的上界是 `0.2.0-0`，对 `0.2.0-rc.1` 判 false 会让插件**不被装载**，所以上界写成显式的 `<0.3.0`。
 
 ## 安装
 
@@ -67,14 +67,14 @@ dsh plugin --profile <name> add @max-null/dsh-chat-rail
 ### 收藏与快速填充
 
 - **消息操作按钮**：每条用户消息的复制按钮左侧新增两个按钮
-  - **星 ★**：收藏/取消收藏该消息（收藏后变成黄色实心星）；收藏状态按会话持久化（localStorage），刷新与重启后保留
+  - **星 ★**：收藏/取消收藏该消息（收藏后变成黄色实心星）；收藏按会话持久化在 **host 文件**（`$DSH_HOME/chat-rail-favorites.json`，缺省 `~/.dsh/`），刷新与重启后保留——不走 localStorage（按 origin 隔离，端口一变就丢），旧 localStorage 数据只在首次加载时迁移一次
   - **加号 ＋**：一键把该消息**全文 + 附件**填入输入框（草稿设为消息全文，历史图片经官方附件通道回填入输入框）
 - **导航条联动**：收藏的消息指示条显示为**黄色**；展开态在标题前显示小星标
 - **只显示收藏**：过滤开关是导航面板的**通栏 header**（星标 + 文案 + 底部分隔线，折叠/展开同构、贴顶），点击点亮（黄色实心）后导航栏只显示已收藏的消息；再点恢复全部。列表在 header 之下独立滚动，开关不压住条目；无收藏时不显示该开关，过滤中取消最后一条收藏会自动退出过滤
 
 ## 架构
 
-- **host 半端**（`lib/index.mjs`）：注册 `chatRail` 会话投影——从 session log 折叠用户消息锚点 `{ seq, time, text, id }`（排除插件/工具注入的上下文行）
+- **host 半端**（`lib/index.mjs`）：注册 `chatRail` 会话投影——从 session log 折叠用户消息锚点 `{ seq, time, text, hasImage, images, id }`（排除插件/工具注入的上下文行）
 - **client 半端**（`lib/client.js`）：`conversation.input.dock` 槽注入，portal 渲染到 body；右缘实时测量会话列定位（ResizeObserver + 兜底采样），侧边栏 push 展开时跟随移动，空间不足时淡出
 - 数据源优先序：`chatRail` 投影 → 已加载聊天节点 → 后台 loadOlder 循环
 
