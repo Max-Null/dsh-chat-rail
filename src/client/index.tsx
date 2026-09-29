@@ -117,7 +117,10 @@ const css = [
   // 展开/收起用 ease-in-out 且两侧对称时长，减少「抖一下」（原来 width 用
   // cubic-bezier(.4,0,.2,1)、right/top 用 var(--ds-transition-duration-slow)，
   // 两条曲线不同步，中间过程会互相追）。
-  '.crl_nav{user-select:none;z-index:100;position:fixed;right:3px;top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:0 0 10px;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:none;transition:width .25s cubic-bezier(.4,0,.2,1),right .25s cubic-bezier(.4,0,.2,1),top .25s cubic-bezier(.4,0,.2,1),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
+  // z-index 90 而非 100：DSH 的下拉菜单与 tooltip 同为 100（ui-primitives/Menu.module.css），
+  // 而本 rail 是 createPortal 挂在 body 末尾的，同层级时 DOM 靠后者在上——100 会盖住菜单。
+  // 90 仍在侧栏 30、dockkit 70 之上，只是让菜单赢（2026-09-29 用户实机确认此现象）。
+  '.crl_nav{user-select:none;z-index:90;position:fixed;right:3px;top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:0 0 10px;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:none;transition:width .25s cubic-bezier(.4,0,.2,1),right .25s cubic-bezier(.4,0,.2,1),top .25s cubic-bezier(.4,0,.2,1),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
   // 列表容器：rail 自身不再滚动，滚动只发生在这一层，header 因此永远不覆盖条目。
   '.crl_list{display:flex;flex-direction:column;align-items:center;width:100%;min-height:0;flex:1 1 auto;position:relative;overflow-y:hidden;overflow-x:hidden;scrollbar-width:none}',
   'body[data-ds-dark-theme] .crl_nav,[data-theme=\'dark\'] .crl_nav,.dark .crl_nav{background:rgba(28,28,32,.6);border-color:rgba(255,255,255,.09)}',
