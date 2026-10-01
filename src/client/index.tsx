@@ -212,7 +212,7 @@ const css = [
   // 同时需要一点存活宽限：鼠标从 rail 移到 tip 的途中会先触发 item 的 mouseleave，
   // 否则 tip 在指针到达之前就被关掉，里面的按钮根本点不到（实测：坐标点击无效、
   // 而元素 .click() 有效，即为此竞态）。
-  '.crl_tip{position:fixed;z-index:200;max-width:360px;max-height:70vh;overflow-y:auto;padding:10px 12px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary,var(--text-primary,rgba(0,0,0,.85)));background:var(--dsw-alias-surface-raised,var(--bg-elevated,rgba(255,255,255,.97)));border:1px solid var(--dsw-alias-border-l2,var(--border-default,rgba(0,0,0,.12)));border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.16);white-space:pre-wrap;word-break:break-word;pointer-events:auto}',
+  '.crl_tip{position:fixed;z-index:200;box-sizing:border-box;max-width:360px;max-height:70vh;overflow-y:auto;padding:10px 12px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary,var(--text-primary,rgba(0,0,0,.85)));background:var(--dsw-alias-surface-raised,var(--bg-elevated,rgba(255,255,255,.97)));border:1px solid var(--dsw-alias-border-l2,var(--border-default,rgba(0,0,0,.12)));border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.16);white-space:pre-wrap;word-break:break-word;pointer-events:auto}',
   // tip 里的「提问&回答」区（用户 2026-09-14 重新设计：问答不进导航条，收在这里）
   '.crl_tipQaWrap{margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.1));display:flex;flex-direction:column;gap:4px;pointer-events:auto}',
   '.crl_tipQa{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:5px 8px;border:none;border-radius:7px;background:rgba(77,107,254,.08);color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .15s ease}',
@@ -359,6 +359,12 @@ export function syncOfficialHide(showOfficial: boolean): void {
  * 36px 是 rail 自身宽度，留 ~220px 给消息区——再窄时指示点已无参考意义。
  */
 const RAIL_MIN_SPACE = 260
+
+/**
+ * tip 面板的最小可读高度（px）。到不了这个高度时不再往下挂，改为整体上移——
+ * 否则面板只剩一条缝，与「看得见内容」这个存在理由相抵。
+ */
+const TIP_MIN_HEIGHT = 120
 
 /** 导航条隐藏类（空间不足时由 React 加上；用类而非内联 display，避免与官方模式冲突）。 */
 const NAV_HIDDEN_CLASS = 'crl_navHidden'
@@ -1509,7 +1515,7 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
   // The tip only triggers after the expand animation settles — in the
   // collapsed state the item rect is only 36px wide, so a tip positioned
   // there would be wrong once the rail expands.
-  const [tip, setTip] = useState<{ index: number; x: number; y: number } | null>(null)
+  const [tip, setTip] = useState<{ index: number; x: number; y: number; maxHeight: number } | null>(null)
   const navRef = useRef<HTMLDivElement | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)  // True only after the expand animation has fully settled; the width
   // transition takes ~250ms after `show` flips, and item rects are only
@@ -1538,13 +1544,26 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
     return () => el.removeEventListener('pointermove', onMove)
   }, [])
 
-  /** Position the tip against the item's CURRENT (post-expand) rect. */
+  /** Position the tip against the item's CURRENT (post-expand) rect.
+   *
+   *  The panel hangs from the item's top edge, and it used to run the full 70vh
+   *  from there: under a low item that reached past the composer and covered the
+   *  send button — and because the tip owns pointer events, it swallowed the
+   *  clicks as well. Cap it at the composer seat's top edge instead, so the
+   *  panel scrolls internally rather than growing over the input area. When even
+   *  the cap cannot hold TIP_MIN_HEIGHT below the item, the top edge moves up.
+   */
   const positionTip = (index: number) => {
     if (index < 0) return
     const el = navRef.current?.querySelector<HTMLElement>(`[data-crl-index="${index}"]`)
     if (el === null || el === undefined) return
     const rect = el.getBoundingClientRect()
-    setTip({ index, x: rect.left - 12, y: rect.top })
+    // 与 [data-conversation-scroll] 同族的官方锚点；缺席时（非会话视图）退回视口底边距。
+    const seat = document.querySelector<HTMLElement>('[data-composer-seat]')
+    const cap = (seat !== null ? seat.getBoundingClientRect().top : window.innerHeight - 80) - 8
+    const y = Math.min(rect.top, Math.max(8, cap - TIP_MIN_HEIGHT))
+    const maxHeight = Math.max(TIP_MIN_HEIGHT, Math.min(window.innerHeight * 0.7, cap - y))
+    setTip({ index, x: rect.left - 12, y, maxHeight })
   }
 
   /** Handle item hover: the collapsed state only expands the rail; the tip
@@ -1931,7 +1950,7 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
     tip !== null && tipIndex >= 0 && tipIndex < messages.length
       ? createElement('div', {
           className: S.tip,
-          style: { left: `${tip.x}px`, top: `${tip.y}px`, transform: 'translateX(-100%)' },
+          style: { left: `${tip.x}px`, top: `${tip.y}px`, transform: 'translateX(-100%)', maxHeight: `${tip.maxHeight}px` },
           // 指针进入 tip 时取消待关闭定时器（见 handleItemLeave 的宽限说明）
           onMouseEnter: () => cancelTipClose(),
           onMouseLeave: () => setTip(null),
