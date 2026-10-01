@@ -40,7 +40,7 @@ This plugin belongs to the **`@max-null/*` family** — a set of plugins that to
 - **会话区滚动条隐藏**：会话区（`[data-conversation-scroll]`）自带的 Y 轴滚动条被本插件画成透明——它与导航条的位置指示功能重复，官方内核 `0.1.5` 起又把 bar 从「紧贴内容边缘」改为「离边缘 2px」，观感上更显眼。只覆盖 thumb 颜色、**保留官方 8px 槽位**（`scrollbar-gutter: stable` 是官方为输入卡跨视图不位移而保留的），滚轮/触控板滚动不受影响。
 - **无 better-sidebar 也能用**：变量缺失时走 CSS fallback（垂直居中 + 视口右缘），纯 DSH 环境开箱即用。
 - **与 DSH 自带轮次导航协同**：DSH `0.1.2-alpha.1+` 自带 TurnNavigator（轮次导航竖轨）。安装本插件后自动隐藏官方竖轨（aria-label 双文案锚点，不依赖构建 hash），由本插件统一承担会话导航；未安装本插件时官方导航照常显示。设置卡片另提供**「使用官方轮次导航条（对比模式）」**开关，可随时切回官方竖轨对比（免重启生效）。
-- **不遮挡 DSH 的菜单与浮层**：官方 frame 的浮层梯度是「右侧面板 10 → 拖拽手柄 11 → 标题栏座位 15 → `shell.overlay` 20 → 全屏右面板 40」（正本 `AppFrame.module.css`）。导航条定在 **5**，只压在会话列内容之上、不进浮层那一档——于是菜单与 tooltip（100）、以及 `shell.overlay` 里的应用级浮层（例如插件中心的「插件更新」弹窗）都赢它。
+- **不遮挡 DSH 的菜单与浮层**：官方 frame 的浮层梯度是「右侧面板 10 → 拖拽手柄 11 → 标题栏座位 15 → `shell.overlay` 20 → 全屏右面板 40」（正本 `AppFrame.module.css`）。导航条定在 **19**——这条梯度里能取的最大值：压过右侧面板、拖拽手柄与标题栏座位，又停在 `shell.overlay` 之下。菜单与 tooltip（100）、以及 `shell.overlay` 里的应用级浮层（例如插件中心的「插件更新」弹窗）仍然赢它。
 - **深历史跳转（DSH `0.1.2-alpha.3+` 内核）**：会话历史按窗口分页加载（`hasMore`）时，点击跳转走官方 `loadThrough(seq)` 精确跳转装载器（200 条/页一次到位），替代旧版逐页 `loadOlder`（50 条/页）循环；旧内核无 `loadThrough` 时自动回退逐页循环。
 - **DSH 版本要求**：`>=0.1.7-rc.2 <0.3.0`，与 `peerDependencies` 一致。内核按 `semver.satisfies(运行时, 范围, { includePrerelease: true })` 逐个校验 `@deepseek-ai/dsh-*` peer——预发布版参与比较，caret 写法 `^0.1.7-rc.2` 的上界是 `0.2.0-0`，对 `0.2.0-rc.1` 判 false 会让插件**不被装载**，所以上界写成显式的 `<0.3.0`。
 

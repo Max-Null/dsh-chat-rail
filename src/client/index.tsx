@@ -117,15 +117,15 @@ const css = [
   // 展开/收起用 ease-in-out 且两侧对称时长，减少「抖一下」（原来 width 用
   // cubic-bezier(.4,0,.2,1)、right/top 用 var(--ds-transition-duration-slow)，
   // 两条曲线不同步，中间过程会互相追）。
-  // z-index 5：官方 frame 的浮层梯度（AppFrame.module.css）是「右侧面板 10 → 拖拽手柄 11
-  // → 标题栏座位 15 → shell.overlay 20 → 全屏右面板 40」。rail 是常驻导航，只该压在
-  // 会话列内容（0）之上，不该进浮层那一档。
+  // z-index 19：官方 frame 的浮层梯度（AppFrame.module.css）是「右侧面板 10 → 拖拽手柄 11
+  // → 标题栏座位 15 → shell.overlay 20 → 全屏右面板 40」。19 是 rail 在这条梯度里能取的
+  // 最大值——压过右侧面板、拖拽手柄与标题栏座位，又停在 shell.overlay 那层之下。
   //   · 100 与 Menu/tooltip 同层，rail 是 body 末尾 portal，同层时 DOM 靠后者在上 → 盖住菜单
   //     （2026-09-29 实机）。
-  //   · 90 只调开了与菜单的先后，仍高于**整层 shell.overlay(20)** —— 插件中心的「插件更新」
-  //     弹窗注册在那层里且自身没有 portal，照样被 rail 挡住（2026-09-30 用户截图）。
-  // 低于 20 才是结构性修法：那一层里的一切（无论有没有自己的 z-index）都赢 rail。
-  '.crl_nav{user-select:none;z-index:5;position:fixed;right:3px;top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:0 0 10px;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:none;transition:width .25s cubic-bezier(.4,0,.2,1),right .25s cubic-bezier(.4,0,.2,1),top .25s cubic-bezier(.4,0,.2,1),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
+  //   · 90 高于**整层 shell.overlay(20)** —— 插件中心的「插件更新」弹窗注册在那层里且自身
+  //     没有 portal，照样被 rail 挡住（2026-09-30 用户截图）。
+  // 结构性约束只有一条：**低于 20**——那一层里的一切（无论有没有自己的 z-index）都赢 rail。
+  '.crl_nav{user-select:none;z-index:19;position:fixed;right:3px;top:calc((100vh - var(--dsh-sidebar-height,0px)) / 2);transform:translateY(-50%);width:36px;max-height:min(60vh,420px,calc(100vh - var(--dsh-sidebar-height,0px) - 40px));display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:0 0 10px;border-radius:18px;overflow-y:hidden;overflow-x:hidden;background:rgba(255,255,255,.55);border:1px solid rgba(0,0,0,.07);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);scrollbar-width:none;transition:width .25s cubic-bezier(.4,0,.2,1),right .25s cubic-bezier(.4,0,.2,1),top .25s cubic-bezier(.4,0,.2,1),background .2s ease,border-color .2s ease,box-shadow .2s ease}',
   // 列表容器：rail 自身不再滚动，滚动只发生在这一层，header 因此永远不覆盖条目。
   '.crl_list{display:flex;flex-direction:column;align-items:center;width:100%;min-height:0;flex:1 1 auto;position:relative;overflow-y:hidden;overflow-x:hidden;scrollbar-width:none}',
   'body[data-ds-dark-theme] .crl_nav,[data-theme=\'dark\'] .crl_nav,.dark .crl_nav{background:rgba(28,28,32,.6);border-color:rgba(255,255,255,.09)}',
