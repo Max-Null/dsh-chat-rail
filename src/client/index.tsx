@@ -244,8 +244,9 @@ const css = [
   '.crl_msgAct{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:0;padding:6px;border:none;border-radius:28px;background:transparent;color:var(--dsw-alias-label-tertiary,rgba(0,0,0,.42));cursor:pointer;transition:background .15s ease,color .15s ease}',
   '.crl_msgAct:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-secondary,rgba(0,0,0,.72))}',
   '.crl_msgAct:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:2px}',
-  '.crl_msgAct[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);padding:5px 10px;border-radius:8px;background:rgba(24,28,36,.94);color:rgba(255,255,255,.95);font-size:12px;line-height:1.4;white-space:nowrap;pointer-events:none;opacity:0;animation:crl-tip-in .12s ease .55s forwards;z-index:3000}',
-  '.crl_msgAct[data-tip]:hover::before{content:"";position:absolute;left:50%;bottom:calc(100% + 3px);transform:translateX(-50%);border-left:5px solid transparent;border-right:5px solid transparent;border-top:5px solid rgba(24,28,36,.94);pointer-events:none;opacity:0;animation:crl-tip-in .12s ease .55s forwards;z-index:3000}',
+  // 提示挂在按钮**下方**（与官方复制按钮一致）：挂上方时它会伸进消息行、盖住正文。
+  '.crl_msgAct[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:50%;top:calc(100% + 8px);transform:translateX(-50%);padding:5px 10px;border-radius:8px;background:rgba(24,28,36,.94);color:rgba(255,255,255,.95);font-size:12px;line-height:1.4;white-space:nowrap;pointer-events:none;opacity:0;animation:crl-tip-in .12s ease .55s forwards;z-index:3000}',
+  '.crl_msgAct[data-tip]:hover::before{content:"";position:absolute;left:50%;top:calc(100% + 3px);transform:translateX(-50%);border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:5px solid rgba(24,28,36,.94);pointer-events:none;opacity:0;animation:crl-tip-in .12s ease .55s forwards;z-index:3000}',
   '@keyframes crl-tip-in{to{opacity:1}}',
   '.crl_msgAct.crl_fav.crl_on{color:#ffd166}',
   '.crl_msgAct.crl_fav.crl_on svg{fill:currentColor}',
@@ -1386,11 +1387,17 @@ interface TimelineRailProps {
   /** Draft write + attachment-add face (session-scope framework injection). */
   inputActions?: {
     setDraft(text: string): void
-    addImages(ids: readonly string[]): boolean
+    /** 内核 0.2.0-rc.2 的名字（这一代起它就在 InputActions 类型面上）。 */
+    addAttachments?(ids: readonly string[]): boolean
+    /** rc.2 之前的名字；声明里的 peer 范围横跨两代，所以两个都认。 */
+    addImages?(ids: readonly string[]): boolean
   } | undefined
-  /** Runtime draft-image registry (hosted by ui-conversation). */
+  /** Runtime draft-attachment registry (hosted by ui-conversation). */
   conversation?: {
-    createDraftImages(files: readonly File[]): readonly { id: string }[]
+    /** 内核 0.2.0-rc.2 起：多一个 sessionId 前参。 */
+    createDrafts?(sessionId: SessionId, files: readonly File[]): readonly { id: string }[]
+    /** rc.2 之前的名字。 */
+    createDraftImages?(files: readonly File[]): readonly { id: string }[]
   } | undefined
 }
 
@@ -1675,11 +1682,18 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
         }
       }
       if (files.length === 0) return
-      const drafts = conversation.createDraftImages(files)
+      // 两代名字都在：内核 0.2.0-rc.2 把 createDraftImages/addImages 换成了
+      // createDrafts(sessionId, files) 与 addAttachments，而声明里的 peer 范围
+      // 同时覆盖两代——只认新名会让旧内核上这一路静默失效。
+      const drafts = conversation.createDrafts !== undefined
+        ? conversation.createDrafts(sessionId, files)
+        : (conversation.createDraftImages?.(files) ?? [])
       const ids = drafts.map((draft) => draft.id).filter((id): id is string => id !== undefined)
-      if (ids.length > 0) {
-        try { inputActions.addImages?.(ids) } catch { /* draft-image registry may reject; text fill already landed */ }
-      }
+      if (ids.length === 0) return
+      try {
+        if (inputActions.addAttachments !== undefined) inputActions.addAttachments(ids)
+        else inputActions.addImages?.(ids)
+      } catch { /* attachment registry may reject; text fill already landed */ }
     })()
   }, [conversation, inputActions, messages, nodeSnapshot, readThumb, sessionId])
 
@@ -2055,10 +2069,14 @@ function apply(ctx: ClientContext): void {
     inject: () => ({
       sessionsService: ctx.sessions,
       chatOf,
-      // createDraftImages lives on the concrete ConversationController, not
-      // the outward IConversation face; the runtime service is always the
-      // controller, so the cast is structural, never a feature guess.
-      conversation: ctx.conversation as unknown as { createDraftImages(files: readonly File[]): readonly { id: string }[] },
+      // createDrafts lives on the concrete ConversationController, not the
+      // outward IConversation face; the runtime service is always the
+      // controller, so the cast is structural, never a feature guess. Both
+      // generations are declared because the peer range spans them.
+      conversation: ctx.conversation as unknown as {
+        createDrafts?(sessionId: SessionId, files: readonly File[]): readonly { id: string }[]
+        createDraftImages?(files: readonly File[]): readonly { id: string }[]
+      },
     }),
   }, TimelineRail))
   // 设置（Plugins 页）：0.1.7 的槽是 `plugins.bundle.config`，key 用**包名**。
