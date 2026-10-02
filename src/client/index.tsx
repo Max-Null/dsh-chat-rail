@@ -1135,6 +1135,85 @@ const nextFrame = (): Promise<void> => new Promise<void>((resolve) => {
   requestAnimationFrame(() => { resolve() })
 })
 
+/** 落位结束后，冻结再存活多久才把高亮交还给 scroll-spy（ms）。
+ *
+ *  落位（含单次复核）的赋值在 `jumpToMessage` 内就返回了，但它们派发的 `scroll`
+ *  事件要等下一帧才到监听器，再经 60ms 去抖才跑 `updateActive`。冻结必须活过这个
+ *  窗口，否则刚点亮的高亮会被落位自己触发的那次重算改判。 */
+export const JUMP_FREEZE_RELEASE_MS = 150
+
+/** Injectable timer pair, so the freeze is drivable by a fake clock in tests. */
+export interface JumpFreezeClock {
+  setTimeout(fn: () => void, ms: number): number
+  clearTimeout(id: number): void
+}
+
+export interface JumpFreeze {
+  /** True while a click-initiated jump owns the highlight. */
+  frozen(): boolean
+  /** Claim the freeze for a new jump; supersedes any in-flight owner. */
+  begin(): number
+  /** True while `token` is still the newest owner (a newer click supersedes it). */
+  owns(token: number): boolean
+  /** Release once `token`'s jump has settled — ignored for a superseded token. */
+  settle(token: number): void
+  /** Drop the pending release (component unmount). */
+  dispose(): void
+}
+
+const defaultJumpFreezeClock: JumpFreezeClock = {
+  setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms) as unknown as number,
+  clearTimeout: (id) => { globalThis.clearTimeout(id) },
+}
+
+/**
+ * Freeze the scroll-spy while a click-initiated jump lands.
+ *
+ * 由来（复核 issue #1 的实测）：0.3.1 的「乱跳」来自 `scrollIntoView({behavior:'smooth'})`
+ * ——平滑滚动期间派发 31 次 `scroll`，每滚过一条消息就改一次高亮，高亮跟随效果再把
+ * rail 自己滚 5 次。0.6.x 的落位已改为瞬时（`jumpToMessage` 直接赋 `scrollTop`），
+ * 同一条链只剩 1 次 `scroll`，抖动不复存在。
+ *
+ * 但「点击后高亮不是点的那条」仍在，成因是另一件事：落位把目标行**居中**（视口 50%），
+ * 而 scroll-spy 按**离 40% 线最近**选行——相邻条目中心间距小于视口高度 20% 时，40% 线
+ * 离**上一条**更近，落位后那次重算就把高亮判给上一条（等距时按 DOM 顺序也是上一条赢）。
+ *
+ * 所以要冻结的不是「滚动」，而是「点击之后、落位刚落定时」这段窗口里的重算：点击即高亮，
+ * 窗口内 scroll-spy 不得改判；`settle` 之后再等一个去抖窗口，然后交还——由用户的下一次
+ * 滚动接管，而不是由落位自己触发的那次重算接管。
+ *
+ * 所有权用单调递增的 token 表示：连点两条已加载的条目时两次跳转会重叠，旧的那次绝不能
+ * 在新的那次落位途中解除冻结（这正是 issue 里「旧兜底逻辑提前解除冻结」的当前对应物）。
+ */
+export function createJumpFreeze(clock: JumpFreezeClock = defaultJumpFreezeClock): JumpFreeze {
+  let owner = 0
+  let active = false
+  let release: number | null = null
+  const cancelRelease = (): void => {
+    if (release !== null) { clock.clearTimeout(release); release = null }
+  }
+  return {
+    frozen: () => active,
+    begin: () => {
+      cancelRelease()
+      owner += 1
+      active = true
+      return owner
+    },
+    owns: (token) => token === owner,
+    settle: (token) => {
+      if (token !== owner) return
+      cancelRelease()
+      release = clock.setTimeout(() => {
+        release = null
+        // 期间若有新点击接管（owner 前移），这次释放作废。
+        if (token === owner) active = false
+      }, JUMP_FREEZE_RELEASE_MS)
+    },
+    dispose: () => { cancelRelease(); active = false },
+  }
+}
+
 /**
  * Ensure the message node is loaded into the visible window, then scroll to it.
  *
@@ -1537,7 +1616,15 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
   // Aborts an in-flight jump (component unmount or a newer click superseding
   // an older one), so the loadOlder/DOM-poll loops stop promptly.
   const jumpAbortRef = useRef<AbortController | null>(null)
-  useEffect(() => () => jumpAbortRef.current?.abort(), [])
+  // Scroll-spy freeze owned by the newest click-initiated jump (see
+  // createJumpFreeze). Lazily created so one instance survives every re-render.
+  const jumpFreezeRef = useRef<JumpFreeze | null>(null)
+  if (jumpFreezeRef.current === null) jumpFreezeRef.current = createJumpFreeze()
+  const jumpFreeze = jumpFreezeRef.current
+  useEffect(() => () => {
+    jumpAbortRef.current?.abort()
+    jumpFreeze.dispose()
+  }, [jumpFreeze])
 
   // Track the cursor over the rail for the expand-settled tip re-hit-test
   // (the `show` effect's settle handler reads lastPointerRef). Native
@@ -1759,6 +1846,10 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
       if (key !== undefined) indexByKey.set(key, i)
     }
     const updateActive = () => {
+      // 跳转冻结（createJumpFreeze）：点击后落位期间与刚落位时不让 scroll-spy 改判
+      // ——落位把目标行居中（50%），而这里按「离 40% 线最近」选行，相邻条目中心
+      // 间距小于视口高度 20% 时选中的是上一条。用户的下一次滚动会重新交还给它。
+      if (jumpFreeze.frozen()) return
       const sp = document.querySelector('[data-conversation-scroll]')
       if (sp === null) return
       const rect = sp.getBoundingClientRect()
@@ -1845,6 +1936,11 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
         jumpAbortRef.current?.abort()
         const controller = new AbortController()
         jumpAbortRef.current = controller
+        // 点击即高亮：不等落位。未加载的条目要先分页，落位前根本没有 scroll 事件
+        // 可供 scroll-spy 更新；而已加载的条目落位后，那次重算按 40% 线选行，会把
+        // 高亮判给上一条（见 createJumpFreeze）。冻结挡住的就是后一种。
+        setActiveIndex(i)
+        const token = jumpFreeze.begin()
         void jumpToMessage(
           sessionsService as never,
           sessionId as string,
@@ -1862,8 +1958,13 @@ function TimelineRail({ useProjection, sessionId, sessionsService, chatOf, input
           // mark (already loaded) never flashes "loading", and the indicator
           // drops as soon as the target row is located — the landing itself is
           // the visible feedback.
-          (phase) => setJumping(phase === 'paging'),
-        ).finally(() => setJumping(false))
+          (phase) => { if (jumpFreeze.owns(token)) setJumping(phase === 'paging') },
+        ).finally(() => {
+          jumpFreeze.settle(token)
+          // 只有最新一次跳转能清忙碌态：被新点击取代的旧跳转 settle 时，不得抹掉
+          // 新跳转仍在进行中的 paging 指示。
+          if (jumpFreeze.owns(token)) setJumping(false)
+        })
       },
       onMouseEnter: () => handleItemEnter(i),
       onMouseLeave: () => handleItemLeave(i),
